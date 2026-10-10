@@ -2,9 +2,8 @@ name: Generate and Send Daily Video
 
 on:
   schedule:
-    # S'executa cada dia a les 10:00 UTC (12:00h hora peninsular)
     - cron: '0 10 * * *'
-  workflow_dispatch: # Afegeix un botó per provar-ho manualment quan vulguis
+  workflow_dispatch:
 
 jobs:
   render_and_send:
@@ -23,10 +22,13 @@ jobs:
       - name: Instal·lar FFmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
-      - name: Instal·lar llibreries de Python
-        run: pip install -r requirements.txt
+      - name: Instal·lar llibreries Python
+        run: pip install playwright requests
 
-      - name: Generar vídeo i enviar per Telegram
+      - name: Instal·lar Chromium per Playwright
+        run: playwright install --with-deps chromium
+
+      - name: Generar vídeo amb HTML5 i enviar a Telegram
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
