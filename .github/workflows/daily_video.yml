@@ -2,8 +2,30 @@ name: Generate and Send Daily Video
 
 on:
   schedule:
+    # S'executa automàticament cada dia a les 10:00 UTC (12:00h peninsular)
     - cron: '0 10 * * *'
   workflow_dispatch:
+    inputs:
+      duration:
+        description: 'Durada del vídeo en segons'
+        required: true
+        default: '30'
+        type: choice
+        options:
+          - '20'
+          - '30'
+          - '45'
+          - '60'
+      rings:
+        description: 'Nombre danells'
+        required: true
+        default: '7'
+        type: choice
+        options:
+          - '5'
+          - '6'
+          - '7'
+          - '8'
 
 jobs:
   render_and_send:
@@ -23,13 +45,15 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
       - name: Instal·lar llibreries Python
-        run: pip install playwright requests
+        run: pip install -r requirements.txt
 
       - name: Instal·lar navegador Firefox per Playwright
         run: playwright install --with-deps firefox
 
-      - name: Generar vídeo amb HTML5 i enviar a Telegram
+      - name: Generar vídeo amb àudio i enviar a Telegram
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          DURATION: ${{ github.event.inputs.duration || '30' }}
+          RINGS: ${{ github.event.inputs.rings || '7' }}
         run: python main.py
