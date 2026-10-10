@@ -50,18 +50,22 @@
     const WIDTH = 1080, HEIGHT = 1920;
     const CENTER = { x: WIDTH / 2, y: HEIGHT / 2 };
 
-    const ARENA_RADIUS = 410;
-    const SPIKE_HEIGHT = 48;          // Punxes més altes i afilades (abans 32)
-    const BALL_RADIUS = 20;
-    const GRAVITY = 950;              // Gravetat realista (px/s²)
+    const ARENA_RADIUS = 415;
+    const SPIKE_HEIGHT = 48;          // Alçada de les punxes afilades
+    const BALL_RADIUS = 27;           // Boles més grans (vives i mortes)
+    const GRAVITY = 950;              // Gravetat realista cap avall (px/s²)
     const INITIAL_SPEED = 620;
     const BOUNCE_RESTITUTION = 1.018; // Rebot elàstic amb bona energia
     const MAX_SPEED = 920;
     const MIN_SPEED = 380;
 
+    // Línia interior de les puntes dels spikes
+    const R_SPIKE_TIPS = ARENA_RADIUS - SPIKE_HEIGHT;
+
     // Escletxa fixa a la part inferior-esquerra (~135 graus / 7:30h)
     const GAP_ANGLE = 2.35;
-    const GAP_SIZE = 0.48;            // Obertura neta
+    const GAP_SIZE = 0.44;            // Obertura neta d'escapada
+    const NUM_SPIKES = 42;            // Nombre de punxes contínues
 
     // Filtre matemàtic de durada (25s a 60s)
     const STRICT_MIN_DURATION = 25.0;
@@ -159,7 +163,7 @@
         let hitAng = Math.atan2(dy, dx);
         if (hitAng < 0) hitAng += Math.PI * 2;
 
-        // 1. Rebot segur contra les boles grises mortes anteriors
+        // 1. Rebot net contra boles grises mortes (escuts protectors)
         let hitDead = false;
         for (let i = 0; i < deadBalls.length; i++) {
           const d = deadBalls[i];
@@ -187,6 +191,7 @@
 
         // 2. Comprovació d'escletxa i punxes
         if (isInGap(hitAng)) {
+          // Ha passat per l'escletxa!
           if (dist > ARENA_RADIUS + BALL_RADIUS + 10) {
             if (simTime >= STRICT_MIN_DURATION && simTime <= STRICT_MAX_DURATION && deadBalls.length >= 4) {
               return { success: true, duration: simTime, deadCount: deadBalls.length, seed, vx0, vy0 };
@@ -194,17 +199,21 @@
             return { success: false, duration: simTime };
           }
         } else {
-          // Si toca una punxa lliure -> MOR!
-          if (dist >= ARENA_RADIUS - SPIKE_HEIGHT + BALL_RADIUS * 0.40) {
-            // Guarda la bola morta exactament a la posició d'impacte
-            deadBalls.push({ x: b.x, y: b.y });
+          // MOR TAN BON PUNT TOCA LA PUNTA D'UN SPIKE!
+          if (dist + BALL_RADIUS >= R_SPIKE_TIPS) {
+            const nx = dx / (dist || 1);
+            const ny = dy / (dist || 1);
 
-            // LA SEGÜENT BOLA SURT AMB LA MATEIXA VELOCITAT I DIRECCIÓ EXACTA
+            // La bola morta es col·loca just a la punta per fer d'escut cap a l'interior
+            const deadX = CENTER.x + nx * (R_SPIKE_TIPS + BALL_RADIUS * 0.15);
+            const deadY = CENTER.y + ny * (R_SPIKE_TIPS + BALL_RADIUS * 0.15);
+            deadBalls.push({ x: deadX, y: deadY });
+
+            // La següent bola surt amb la mateixa velocitat i posició inicial
             b = { x: spawnX, y: spawnY, vx: vx0, vy: vy0, lifetime: 0 };
           }
         }
 
-        // Evitar bucles infinits si una bola rebota massa estona
         if (b.lifetime > 12.0) {
           return { success: false, duration: simTime };
         }
@@ -214,10 +223,10 @@
     }
 
     function findBestSimulation() {
-      console.log(`🔍 Cercant partida amb efecte dòmino (durada garantida ${STRICT_MIN_DURATION}s - ${STRICT_MAX_DURATION}s)...`);
-      let bestFallback = { seed: 82, vx0: 380, vy0: 420, deadCount: 6 };
+      console.log(`🔍 Cercant partida amb efecte dòmino (${STRICT_MIN_DURATION}s - ${STRICT_MAX_DURATION}s)...`);
+      let bestFallback = { seed: 104, vx0: 380, vy0: 420, deadCount: 6 };
 
-      for (let s = 1; s < 1800; s++) {
+      for (let s = 1; s < 2000; s++) {
         const res = simulateCandidate(s);
         if (res.success) {
           console.log(`✅ PARTIDA DÒMINO TROBADA (Intent #${s})! Durada: ${res.duration.toFixed(1)}s, Sacrificis: ${res.deadCount}`);
@@ -319,7 +328,7 @@
         let hitAng = Math.atan2(dy, dx);
         if (hitAng < 0) hitAng += Math.PI * 2;
 
-        // 1. Rebot segur contra boles grises mortes anteriors
+        // 1. Rebot net contra les boles grises mortes
         let hitDead = false;
         for (let i = 0; i < deadBalls.length; i++) {
           const d = deadBalls[i];
@@ -367,13 +376,20 @@
             return;
           }
         } else {
-          // Toca la punxa afilada -> MOR!
-          if (dist >= ARENA_RADIUS - SPIKE_HEIGHT + BALL_RADIUS * 0.40) {
-            deadBalls.push({ x: activeBall.x, y: activeBall.y });
+          // MOR TAN BON PUNT FREGA LA PUNTA D'UN SPIKE!
+          if (dist + BALL_RADIUS >= R_SPIKE_TIPS) {
+            const nx = dx / (dist || 1);
+            const ny = dy / (dist || 1);
+
+            // La bola morta es queda a la punta, protegint la zona cap a l'interior
+            const deadX = CENTER.x + nx * (R_SPIKE_TIPS + BALL_RADIUS * 0.15);
+            const deadY = CENTER.y + ny * (R_SPIKE_TIPS + BALL_RADIUS * 0.15);
+
+            deadBalls.push({ x: deadX, y: deadY });
             spawnDeathBurst(activeBall.x, activeBall.y, activeBall.color);
             recordSound('burst', 3);
 
-            // Generar la següent bola amb LA MATEIXA VELOCITAT I TRAJECTÒRIA INICIAL
+            // Generar la següent bola amb la mateixa velocitat inicial
             currentBallNumber++;
             const nextColObj = NEON_PALETTE[Math.floor(Math.random() * NEON_PALETTE.length)];
 
@@ -419,7 +435,7 @@
       ctx.fillText('LOSE THE BALL', CENTER.x, 375);
       ctx.restore();
 
-      // Dibuix de l'anell amb punxes afilades (SPIKE_HEIGHT = 48)
+      // Dibuix de l'anell amb corona contínua de punxes (sense buits)
       if (!hasEscaped) {
         ctx.save();
 
@@ -438,37 +454,38 @@
         ctx.shadowBlur = 20;
         ctx.shadowColor = '#d946ef';
 
-        // 1. Base circular de l'anell
+        // 1. Cercle exterior (amb l'escletxa buida)
         ctx.beginPath();
         const startGap = GAP_ANGLE + GAP_SIZE / 2;
         const endGap = GAP_ANGLE - GAP_SIZE / 2 + Math.PI * 2;
         ctx.arc(CENTER.x, CENTER.y, ARENA_RADIUS, startGap, endGap);
         ctx.stroke();
 
-        // 2. Punxes triangulars altes i punxagudes
-        const NUM_SPIKES = 44;
-        const stepAngle = (Math.PI * 2) / NUM_SPIKES;
+        // 2. Corona contínua de punxes en ziga-zaga (sense cap calba)
+        const spikeArc = (Math.PI * 2) - GAP_SIZE;
+        const stepAngle = spikeArc / NUM_SPIKES;
+        const startBaseAngle = GAP_ANGLE + GAP_SIZE / 2;
 
-        for (let i = 0; i < NUM_SPIKES; i++) {
-          const a1 = i * stepAngle;
-          const a2 = (i + 1) * stepAngle;
-          const amid = (a1 + a2) / 2;
+        ctx.beginPath();
+        for (let i = 0; i <= NUM_SPIKES; i++) {
+          const baseAngle = startBaseAngle + i * stepAngle;
+          const bx = CENTER.x + Math.cos(baseAngle) * ARENA_RADIUS;
+          const by = CENTER.y + Math.sin(baseAngle) * ARENA_RADIUS;
 
-          if (isInGap(amid) || isInGap(a1) || isInGap(a2)) continue;
+          if (i === 0) {
+            ctx.moveTo(bx, by);
+          } else {
+            ctx.lineTo(bx, by);
+          }
 
-          const p1x = CENTER.x + Math.cos(a1) * ARENA_RADIUS;
-          const p1y = CENTER.y + Math.sin(a1) * ARENA_RADIUS;
-          const p2x = CENTER.x + Math.cos(a2) * ARENA_RADIUS;
-          const p2y = CENTER.y + Math.sin(a2) * ARENA_RADIUS;
-          const tipX = CENTER.x + Math.cos(amid) * (ARENA_RADIUS - SPIKE_HEIGHT);
-          const tipY = CENTER.y + Math.sin(amid) * (ARENA_RADIUS - SPIKE_HEIGHT);
-
-          ctx.beginPath();
-          ctx.moveTo(p1x, p1y);
-          ctx.lineTo(tipX, tipY);
-          ctx.lineTo(p2x, p2y);
-          ctx.stroke();
+          if (i < NUM_SPIKES) {
+            const tipAngle = baseAngle + stepAngle / 2;
+            const tx = CENTER.x + Math.cos(tipAngle) * (ARENA_RADIUS - SPIKE_HEIGHT);
+            const ty = CENTER.y + Math.sin(tipAngle) * (ARENA_RADIUS - SPIKE_HEIGHT);
+            ctx.lineTo(tx, ty);
+          }
         }
+        ctx.stroke();
 
         ctx.restore();
       }
@@ -497,9 +514,9 @@
       });
       ringShatterParticles = ringShatterParticles.filter(p => p.life > 0);
 
-      // BOLES GRISES MORTES (ESCUTS COIXÍ)
+      // BOLES GRISES MORTES (UNA SOLA RODONA GRISA SÒLIDA I MÉS GRAN)
       ctx.save();
-      ctx.fillStyle = '#64748b'; // Rodona grisa sòlida
+      ctx.fillStyle = '#64748b'; // Gris sòlid net
       deadBalls.forEach(d => {
         ctx.beginPath();
         ctx.arc(d.x, d.y, BALL_RADIUS, 0, Math.PI * 2);
@@ -520,7 +537,7 @@
       });
       ctx.globalAlpha = 1.0;
 
-      // Bola activa viva
+      // Bola activa viva (més gran)
       ctx.save();
       ctx.shadowBlur = 24;
       ctx.shadowColor = activeBall.glow;
