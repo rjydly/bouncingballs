@@ -1,0 +1,33 @@
+name: Generate and Send Daily Video
+
+on:
+  schedule:
+    # S'executa cada dia a les 10:00 UTC (12:00h hora peninsular)
+    - cron: '0 10 * * *'
+  workflow_dispatch: # Afegeix un botó per provar-ho manualment quan vulguis
+
+jobs:
+  render_and_send:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Baixar repositori
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Instal·lar FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Instal·lar llibreries de Python
+        run: pip install -r requirements.txt
+
+      - name: Generar vídeo i enviar per Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python main.py
