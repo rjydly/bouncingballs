@@ -193,7 +193,6 @@ def synthesize_soundtrack(
                 meme_audio[:n_samples] * 0.95
             )
         elif is_reveal:
-            # Acord triomfant d'escapada
             note_len = 1.4
             n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
             t = np.linspace(0, note_len, n_samples, False)
@@ -205,7 +204,6 @@ def synthesize_soundtrack(
             ) * np.exp(-3.2 * t)
             audio_data[start_sample : start_sample + n_samples] += chord
         elif ev_type == "burst":
-            # Pop de punxa (mort de la bola)
             note_len = 0.16
             n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
             t = np.linspace(0, note_len, n_samples, False)
@@ -215,7 +213,6 @@ def synthesize_soundtrack(
             ) * np.exp(-22 * t)
             audio_data[start_sample : start_sample + n_samples] += burst * 0.55
         else:
-            # Rebot suau contra les boles grises
             freq = FREQUENCIES[note_idx % len(FREQUENCIES)]
             note_len = 0.08
             n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
@@ -277,10 +274,14 @@ def run():
 
         page = context.new_page()
 
-        print(f"Carregant simulador ({sim_url})...")
-        response = page.goto(sim_url, wait_until="load")
+        # Paràmetre anticatxé per garantir que cada sessió carregui una llavor única
+        cache_buster = random.randint(100000, 999999)
+        final_sim_url = f"{sim_url}?cb={cache_buster}"
+
+        print(f"Carregant simulador ({final_sim_url})...")
+        response = page.goto(final_sim_url, wait_until="load")
         if response and response.status >= 400:
-            raise RuntimeError(f"Error HTTP {response.status} en carregar {sim_url}!")
+            raise RuntimeError(f"Error HTTP {response.status} en carregar {final_sim_url}!")
 
         page.wait_for_timeout(1000)
 
