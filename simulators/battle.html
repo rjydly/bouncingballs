@@ -35,6 +35,10 @@
     const CENTER = { x: WIDTH / 2, y: HEIGHT / 2 };
     const ARENA_RADIUS = 465;
 
+    // LÍMITS DE DURADA (28s a 75s = < 1.5 minuts garantit)
+    const MIN_DURATION = 28;
+    const MAX_DURATION = 75;
+
     window.soundEvents = [];
     window.actualDuration = 0;
     window.winnerName = "";
@@ -75,10 +79,10 @@
     ];
 
     // ==========================================
-    // 2. GENERADOR DE BATALLA (4 A 7 BOLES)
+    // 2. FÍSICA RÀPIDA I GENERACIÓ DE CANDIDATS
     // ==========================================
-    const GRAVITY = 0.50; // Física viva
-    const BOUNCE_ACCEL = 1.005;
+    const GRAVITY = 0.52;
+    const BOUNCE_ACCEL = 1.006;
     const MAX_SPEED = 42;
     const BALL_RADIUS = 20;
 
@@ -93,10 +97,10 @@
     }
 
     function generateBattleCandidate() {
-      const numBalls = Math.floor(Math.random() * 4) + 4; // 4, 5, 6 o 7 boles
+      const numBalls = Math.floor(Math.random() * 4) + 4; // Entre 4 i 7 boles
       const shuffledColors = [...PALETTE].sort(() => Math.random() - 0.5).slice(0, numBalls);
 
-      const TOTAL_ANCHORS = 110; // Punts totals al voltant del cercle
+      const TOTAL_ANCHORS = 110;
       const anchorsPerBall = Math.floor(TOTAL_ANCHORS / numBalls);
 
       let balls = [];
@@ -105,16 +109,14 @@
         const col = shuffledColors[i];
         const midAngle = (i + 0.5) * (2 * Math.PI / numBalls);
 
-        // Posició inicial separada cap al seu sector
         const spawnDist = 180 + Math.random() * 80;
         const bx = CENTER.x + Math.cos(midAngle) * spawnDist;
         const by = CENTER.y + Math.sin(midAngle) * spawnDist;
 
-        // Velocitat llançada cap al centre amb desviació
-        const moveAngle = midAngle + Math.PI + (Math.random() - 0.5) * 1.2;
-        const spd = 26 + Math.random() * 6;
+        const moveAngle = midAngle + Math.PI + (Math.random() - 0.5) * 1.3;
+        const spd = 28 + Math.random() * 6;
 
-        // Generar les línies connectades a la paret per a aquesta bola
+        // Totes les cordes inicials distribuïdes al perímetre
         const lines = [];
         for (let a = 0; a < anchorsPerBall; a++) {
           const anchorIdx = i * anchorsPerBall + a;
@@ -144,8 +146,10 @@
       return { balls };
     }
 
-    // Pre-simulació ultra-ràpida per assegurar que la batalla duri entre 25s i 78s
-    function simulateBattle(setup, maxAllowedSec = 82) {
+    // ==========================================
+    // 3. PRE-SIMULACIÓ (FILTRE ESTRICTE DE TEMPS)
+    // ==========================================
+    function simulateBattle(setup, maxAllowedSec) {
       const testBalls = setup.balls.map(b => ({
         x: b.x,
         y: b.y,
@@ -196,7 +200,6 @@
                 ball.x = CENTER.x + nx * (ARENA_RADIUS - ball.radius);
                 ball.y = CENTER.y + ny * (ARENA_RADIUS - ball.radius);
 
-                // Nova línia ancorada al xoc
                 ball.lines.push({
                   ax: CENTER.x + nx * ARENA_RADIUS,
                   ay: CENTER.y + ny * ARENA_RADIUS
@@ -205,7 +208,7 @@
             }
           }
 
-          // 2. Tallar línies dels rivals
+          // 2. Tallar línies rivals
           for (let b = 0; b < testBalls.length; b++) {
             const cutter = testBalls[b];
             if (!cutter.alive) continue;
@@ -221,14 +224,13 @@
                 if (d <= cutter.radius + 3) {
                   target.lines.splice(l, 1);
                   if (target.lines.length === 0) {
-                    target.alive = false; // BOLA ELIMINADA!
+                    target.alive = false;
                   }
                 }
               }
             }
           }
 
-          // Comprovar si només en queda 1 viva
           const aliveRemaining = testBalls.filter(x => x.alive).length;
           if (aliveRemaining <= 1) {
             return frame / FPS;
@@ -240,12 +242,12 @@
     }
 
     function findPerfectBattle() {
-      console.log("🔍 Pre-calculant batalla (cercant duel d'entre 25s i 75s)...");
-      for (let attempt = 0; attempt < 350; attempt++) {
+      console.log(`🔍 Cercant batalla amb durada entre ${MIN_DURATION}s i ${MAX_DURATION}s...`);
+      for (let attempt = 0; attempt < 400; attempt++) {
         const candidate = generateBattleCandidate();
-        const dur = simulateBattle(candidate, 78);
-        if (dur >= 24 && dur <= 75) {
-          console.log(`✅ Batalla perfecta trobada en intent ${attempt + 1}! Durada: ${dur.toFixed(1)}s`);
+        const dur = simulateBattle(candidate, MAX_DURATION);
+        if (dur >= MIN_DURATION && dur <= MAX_DURATION) {
+          console.log(`✅ Partida perfecta en intent ${attempt + 1}! Durada estimada: ${dur.toFixed(1)}s`);
           return candidate;
         }
       }
@@ -263,36 +265,36 @@
     let cutSparks = [];
 
     function spawnDeathBurst(x, y, colorStr) {
-      for (let i = 0; i < 60; i++) {
+      for (let i = 0; i < 35; i++) {
         const ang = Math.random() * Math.PI * 2;
-        const spd = 8 + Math.random() * 20;
+        const spd = 7 + Math.random() * 16;
         particles.push({
           x, y,
           vx: Math.cos(ang) * spd,
           vy: Math.sin(ang) * spd,
-          life: 45,
+          life: 35,
           color: colorStr
         });
       }
     }
 
     function spawnWinnerConfetti(winnerColor) {
-      for (let i = 0; i < 110; i++) {
+      for (let i = 0; i < 90; i++) {
         const ang = Math.random() * Math.PI * 2;
-        const spd = 10 + Math.random() * 26;
+        const spd = 9 + Math.random() * 22;
         particles.push({
           x: CENTER.x,
           y: CENTER.y,
           vx: Math.cos(ang) * spd,
           vy: Math.sin(ang) * spd,
-          life: 70,
+          life: 65,
           color: i % 2 === 0 ? winnerColor : '#ffffff'
         });
       }
     }
 
     // ==========================================
-    // 3. FÍSICA EN TEMPS REAL
+    // 4. BUCLE DE FÍSICA EN TEMPS REAL
     // ==========================================
     function updatePhysics() {
       if (!isRunning) return;
@@ -301,7 +303,7 @@
       globalFrame++;
 
       for (let s = 0; s < SUB_STEPS; s++) {
-        // 1. Moure boles vives
+        // Moure boles vives
         balls.forEach(ball => {
           if (!ball.alive) return;
 
@@ -319,7 +321,6 @@
           const dy = ball.y - CENTER.y;
           const dist = Math.hypot(dx, dy);
 
-          // Rebot a la paret i creació de nova línia
           if (dist >= ARENA_RADIUS - ball.radius) {
             const nx = dx / (dist || 1);
             const ny = dy / (dist || 1);
@@ -331,7 +332,7 @@
               ball.x = CENTER.x + nx * (ARENA_RADIUS - ball.radius);
               ball.y = CENTER.y + ny * (ARENA_RADIUS - ball.radius);
 
-              // Nova corda ancorada a la paret
+              // Nova corda
               ball.lines.push({
                 ax: CENTER.x + nx * ARENA_RADIUS,
                 ay: CENTER.y + ny * ARENA_RADIUS
@@ -342,7 +343,7 @@
           }
         });
 
-        // 2. Col·lisió entre boles
+        // Xoc elàstic entre boles
         for (let i = 0; i < balls.length; i++) {
           for (let j = i + 1; j < balls.length; j++) {
             const b1 = balls[i], b2 = balls[j];
@@ -368,7 +369,7 @@
           }
         }
 
-        // 3. TALLAR LÍNIES DE RIVALS
+        // Tallar línies rivals
         balls.forEach(cutter => {
           if (!cutter.alive) return;
 
@@ -380,21 +381,20 @@
               const d = distPointToSegment(cutter.x, cutter.y, line.ax, line.ay, target.x, target.y);
 
               if (d <= cutter.radius + 3) {
-                // CORDA TALLADA!
                 target.lines.splice(l, 1);
 
-                // Guspires al punt del tall
-                cutSparks.push({ x: cutter.x, y: cutter.y, life: 12, color: target.color });
+                if (cutSparks.length < 25) {
+                  cutSparks.push({ x: cutter.x, y: cutter.y, life: 10, color: target.color });
+                }
 
-                // BOLA ELIMINADA SI ES QUEDA A 0 LÍNIES!
+                // Si es queda sense línies -> MORT
                 if (target.lines.length === 0) {
                   target.alive = false;
                   spawnDeathBurst(target.x, target.y, target.color);
 
-                  // DISPARAR EL SO MEM SELECCIONAT A LA MORT!
+                  // DISPARAR EL SO MEM A LA MORT
                   recordSoundHit(10, true);
 
-                  // Comprovar si només en queda 1 de viva (GUANYADOR)
                   const aliveList = balls.filter(b => b.alive);
                   if (aliveList.length === 1 && !isFinished) {
                     winner = aliveList[0];
@@ -421,66 +421,59 @@
       balls.forEach(ball => {
         if (!ball.alive) return;
         ball.trail.push({ x: ball.x, y: ball.y });
-        if (ball.trail.length > 14) ball.trail.shift();
+        if (ball.trail.length > 12) ball.trail.shift();
       });
     }
 
     // ==========================================
-    // 4. RENDERITZAT VISUAL DE LA BATALLA
+    // 5. RENDERITZAT ULTRARÀPID (SENSE LAG)
     // ==========================================
     function render() {
       ctx.fillStyle = '#030712';
       ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
-      // 1. Dibuixar totes les cordes vives lligades a cada bola
+      // 1. DIBUIX DE CORDES OPTIMITZAT (Un sol stroke per bola, sense shadowBlur pesat)
       balls.forEach(ball => {
-        if (!ball.alive) return;
+        if (!ball.alive || ball.lines.length === 0) return;
 
-        ctx.save();
         ctx.strokeStyle = ball.color;
-        ctx.lineWidth = 2.2;
-        ctx.globalAlpha = 0.65;
-        ctx.shadowBlur = 6;
-        ctx.shadowColor = ball.glowColor;
+        ctx.lineWidth = 2.4;
+        ctx.globalAlpha = 0.70;
 
-        ball.lines.forEach(line => {
-          ctx.beginPath();
-          ctx.moveTo(line.ax, line.ay);
+        ctx.beginPath();
+        for (let i = 0; i < ball.lines.length; i++) {
+          ctx.moveTo(ball.lines[i].ax, ball.lines[i].ay);
           ctx.lineTo(ball.x, ball.y);
-          ctx.stroke();
-        });
-        ctx.restore();
+        }
+        ctx.stroke();
       });
+      ctx.globalAlpha = 1.0;
 
       // 2. Anell del perímetre exterior
       ctx.save();
-      ctx.shadowBlur = 18;
-      ctx.shadowColor = '#6366f1';
       ctx.strokeStyle = '#818cf8';
-      ctx.lineWidth = 10;
+      ctx.lineWidth = 9;
       ctx.beginPath();
       ctx.arc(CENTER.x, CENTER.y, ARENA_RADIUS, 0, Math.PI * 2);
       ctx.stroke();
       ctx.restore();
 
-      // 3. Guspires de talls
+      // 3. Guspires de tall
       cutSparks.forEach(s => {
         s.life--;
         ctx.fillStyle = s.color;
-        ctx.beginPath();
-        ctx.arc(s.x, s.y, s.life / 2, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.fillRect(s.x, s.y, 4, 4);
       });
       cutSparks = cutSparks.filter(s => s.life > 0);
 
-      // 4. Partícules de mort i confeti
+      // 4. Partícules
       particles.forEach(p => {
         p.x += p.vx;
         p.y += p.vy;
         p.life--;
         ctx.fillStyle = p.color;
         ctx.beginPath();
-        ctx.arc(p.x, p.y, Math.max(1, p.life / 4), 0, Math.PI * 2);
+        ctx.arc(p.x, p.y, Math.max(1, p.life / 5), 0, Math.PI * 2);
         ctx.fill();
       });
       particles = particles.filter(p => p.life > 0);
@@ -489,20 +482,21 @@
       balls.forEach(ball => {
         if (!ball.alive) return;
 
-        // Estela
-        ball.trail.forEach((pt, i) => {
+        // Estela ràpida
+        for (let i = 0; i < ball.trail.length; i++) {
+          const pt = ball.trail[i];
           const alpha = (i + 1) / ball.trail.length;
           ctx.fillStyle = ball.color;
-          ctx.globalAlpha = alpha * 0.3;
+          ctx.globalAlpha = alpha * 0.35;
           ctx.beginPath();
-          ctx.arc(pt.x, pt.y, ball.radius * alpha * 0.7, 0, Math.PI * 2);
+          ctx.arc(pt.x, pt.y, ball.radius * alpha * 0.75, 0, Math.PI * 2);
           ctx.fill();
-        });
+        }
         ctx.globalAlpha = 1.0;
 
         // Bola amb brillantor
         ctx.save();
-        ctx.shadowBlur = 24;
+        ctx.shadowBlur = 20;
         ctx.shadowColor = ball.glowColor;
         ctx.fillStyle = ball.color;
         ctx.beginPath();
@@ -517,7 +511,7 @@
       ctx.textAlign = 'center';
       ctx.fillText('bouncelab.tv', CENTER.x, CENTER.y + 12);
 
-      // 6. Marcador i textos superiors
+      // 6. Marcador superior
       ctx.save();
       ctx.textAlign = 'center';
 
@@ -540,10 +534,8 @@
         ctx.shadowColor = 'rgba(255, 255, 255, 0.6)';
         ctx.fillText('LAST ONE STANDING! ⚔️', CENTER.x, 230);
 
-        // Marcador viu de cordes de cada color
-        const totalAlive = balls.filter(b => b.alive).length;
+        // Comptador de línies de cadascuna
         ctx.font = '700 30px sans-serif';
-
         const spacingX = Math.min(130, (WIDTH - 120) / balls.length);
         const startX = CENTER.x - ((balls.length - 1) * spacingX) / 2;
 
@@ -560,7 +552,7 @@
       }
       ctx.restore();
 
-      // Indicador de boles vives inferior
+      // Indicador inferior
       const remainingAlive = balls.filter(b => b.alive).length;
       ctx.font = '700 34px sans-serif';
       ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
@@ -572,7 +564,7 @@
     }
 
     // ==========================================
-    // 5. GRAVADOR SINCRONITZAT AL SEGON 0
+    // 6. GRAVADOR SINCRONITZAT
     // ==========================================
     let mediaRecorder;
     let recordedChunks = [];
