@@ -205,7 +205,7 @@ def synthesize_soundtrack(
             ) * np.exp(-3.2 * t)
             audio_data[start_sample : start_sample + n_samples] += chord
         elif ev_type == "burst":
-            # Pop de punxa (explosió de la bola)
+            # Pop de punxa (mort de la bola)
             note_len = 0.16
             n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
             t = np.linspace(0, note_len, n_samples, False)
