@@ -43,7 +43,7 @@
 
   <script>
     // ============================================================
-    // 0. CONFIGURACIÓ GLOBAL I CONSTANTS FÍSIQUES
+    // 0. CONFIGURACIÓ GLOBAL I FÍSICA NATURAL REALISTA
     // ============================================================
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
@@ -53,14 +53,13 @@
     const ARENA_RADIUS = 415;
     const SPIKE_HEIGHT = 48;          // Punxes altes i afilades
     const BALL_RADIUS = 27;           // Boles grans
-    const GRAVITY = 950;              // Gravetat cap avall (px/s²)
-    const INITIAL_SPEED = 620;
-    const BOUNCE_RESTITUTION = 1.018;
-    const MAX_SPEED = 920;
-    const MIN_SPEED = 380;
+    const GRAVITY = 1450;             // Gravetat contundent i natural (px/s²)
+    const INITIAL_SPEED = 640;        // Impuls inicial net
+    const BOUNCE_RESTITUTION = 0.995; // Conservació d'energia física
+    const MAX_SPEED = 1500;           // Sostre ampli sense talls artificials
 
     const R_SPIKE_TIPS = ARENA_RADIUS - SPIKE_HEIGHT;
-    const GAP_SIZE = 0.48;            // Mida de l'escletxa d'escapada
+    const GAP_SIZE = 0.48;            // Obertura neta d'escapada
     const NUM_SPIKES = 42;            // Corona contínua de punxes
 
     // Filtre matemàtic de durada (25s a 60s)
@@ -116,7 +115,7 @@
     }
 
     // ============================================================
-    // 1. PRE-SIMULACIÓ (ESCLETXA ALEATÒRIA A LA MEITAT INFERIOR)
+    // 1. PRE-SIMULACIÓ (FÍSICA DETERMINISTA PURA)
     // ============================================================
     function simulateCandidate(seed) {
       const rnd = createPRNG(seed);
@@ -126,10 +125,9 @@
       const spawnX = CENTER.x;
       const spawnY = CENTER.y - 80;
 
-      // ESCLETXA ALEATÒRIA A LA MEITAT INFERIOR (entre 0.15π i 0.85π: de les 4h a les 8h)
+      // Escletxa aleatòria a la meitat inferior (de 4h a 8h)
       const gapAngle = (Math.PI * 0.15) + rnd() * (Math.PI * 0.70);
 
-      // Llançament inicial determinista per a tota la partida
       const launchAng = rnd() * Math.PI * 2;
       const launchSpd = INITIAL_SPEED + (rnd() - 0.5) * 60;
       const vx0 = Math.cos(launchAng) * launchSpd;
@@ -144,6 +142,7 @@
         simTime += FIXED_DT;
         b.lifetime += FIXED_DT;
 
+        // Gravetat contínua i lliure (sense tall de MIN_SPEED)
         b.vy += GRAVITY * FIXED_DT;
         b.x += b.vx * FIXED_DT;
         b.y += b.vy * FIXED_DT;
@@ -152,9 +151,6 @@
         if (spd > MAX_SPEED) {
           b.vx = (b.vx / spd) * MAX_SPEED;
           b.vy = (b.vy / spd) * MAX_SPEED;
-        } else if (spd < MIN_SPEED && spd > 0.001) {
-          b.vx = (b.vx / spd) * MIN_SPEED;
-          b.vy = (b.vy / spd) * MIN_SPEED;
         }
 
         const dx = b.x - CENTER.x;
@@ -164,7 +160,7 @@
         let hitAng = Math.atan2(dy, dx);
         if (hitAng < 0) hitAng += Math.PI * 2;
 
-        // 1. Rebot contra les boles grises mortes anteriors
+        // 1. Rebot contra les boles grises mortes
         let hitDead = false;
         for (let i = 0; i < deadBalls.length; i++) {
           const d = deadBalls[i];
@@ -192,7 +188,6 @@
 
         // 2. Comprovació d'escletxa i punxes
         if (isInGap(hitAng, gapAngle)) {
-          // Barrera de seguretat abans dels 22s o mínim de sacrificis
           if (deadBalls.length < MIN_SACRIFICES_REQUIRED || simTime < 22.0) {
             if (dist >= ARENA_RADIUS - BALL_RADIUS) {
               const nx = dx / (dist || 1);
@@ -206,7 +201,6 @@
               }
             }
           } else {
-            // Escapada confirmada
             if (dist > ARENA_RADIUS + BALL_RADIUS + 10) {
               if (simTime >= STRICT_MIN_DURATION && simTime <= STRICT_MAX_DURATION) {
                 return { success: true, duration: simTime, deadCount: deadBalls.length, seed, gapAngle, vx0, vy0 };
@@ -215,7 +209,7 @@
             }
           }
         } else {
-          // Mort en tocar la punta del spike
+          // Mort immediata en fregar la punta de l'spike
           if (dist + BALL_RADIUS >= R_SPIKE_TIPS) {
             const nx = dx / (dist || 1);
             const ny = dy / (dist || 1);
@@ -237,14 +231,14 @@
     }
 
     function findBestSimulation() {
-      console.log(`🔍 Cercant partida amb escletxa a la meitat inferior (${STRICT_MIN_DURATION}s - ${STRICT_MAX_DURATION}s)...`);
+      console.log(`🔍 Pre-calculant física natural (${STRICT_MIN_DURATION}s - ${STRICT_MAX_DURATION}s)...`);
       let bestCandidate = null;
       let closestDistance = Infinity;
 
       for (let s = 1; s < 2500; s++) {
         const res = simulateCandidate(s);
         if (res.success) {
-          console.log(`✅ PARTIDA TROBADA (#${s})! Durada: ${res.duration.toFixed(1)}s, Escletxa: ${(res.gapAngle * 180 / Math.PI).toFixed(0)}°, Sacrificis: ${res.deadCount}`);
+          console.log(`✅ PARTIDA TROBADA (#${s})! Durada: ${res.duration.toFixed(1)}s, Sacrificis: ${res.deadCount}`);
           return res;
         }
 
@@ -257,14 +251,13 @@
         }
       }
 
-      return bestCandidate || { seed: 180, gapAngle: 2.35, vx0: 480, vy0: -120, deadCount: 6, duration: 32.0 };
+      return bestCandidate || { seed: 120, gapAngle: 2.35, vx0: 480, vy0: -120, deadCount: 6, duration: 32.0 };
     }
 
     const optimalMatch = findBestSimulation();
     const optimalSeed = optimalMatch.seed;
     const gameRND = createPRNG(optimalSeed);
 
-    // PARAMÈTRES BLOQUEJATS PER A AQUEST VÍDEO
     const RING_GAP_ANGLE = optimalMatch.gapAngle;
     const SPAWN_X = CENTER.x;
     const SPAWN_Y = CENTER.y - 80;
@@ -337,9 +330,6 @@
       if (curSpd > MAX_SPEED) {
         activeBall.vx = (activeBall.vx / curSpd) * MAX_SPEED;
         activeBall.vy = (activeBall.vy / curSpd) * MAX_SPEED;
-      } else if (curSpd < MIN_SPEED && curSpd > 0.001) {
-        activeBall.vx = (activeBall.vx / curSpd) * MIN_SPEED;
-        activeBall.vy = (activeBall.vy / curSpd) * MIN_SPEED;
       }
 
       const dx = activeBall.x - CENTER.x;
@@ -395,7 +385,7 @@
             }
           }
         } else {
-          // Escapada!
+          // Escapada autoritzada
           if (dist > ARENA_RADIUS + BALL_RADIUS + 10) {
             hasEscaped = true;
             isFinished = true;
@@ -444,7 +434,7 @@
     }
 
     // ============================================================
-    // 4. RENDERITZAT VISUAL
+    // 4. RENDERITZAT VISUAL AMB ACUMULADOR DE TEMPS FIX
     // ============================================================
     let lastTime = null;
     let physicsAccumulator = 0;
@@ -479,7 +469,7 @@
       ctx.fillText('LOSE THE BALL', CENTER.x, 375);
       ctx.restore();
 
-      // Dibuix de l'anell amb escletxa a la meitat inferior
+      // Dibuix de l'anell
       if (!hasEscaped) {
         ctx.save();
 
@@ -505,7 +495,7 @@
         ctx.arc(CENTER.x, CENTER.y, ARENA_RADIUS, startGap, endGap);
         ctx.stroke();
 
-        // 2. Corona contínua de punxes (sense cap buit)
+        // 2. Corona contínua de punxes
         const spikeArc = (Math.PI * 2) - GAP_SIZE;
         const stepAngle = spikeArc / NUM_SPIKES;
         const startBaseAngle = RING_GAP_ANGLE + GAP_SIZE / 2;
