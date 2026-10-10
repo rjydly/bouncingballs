@@ -27,81 +27,64 @@
 
   <script>
     // ==========================================
-    // 0. CONFIGURACIÓ GENERAL
+    // 0. CONFIGURACIÓ I PARÀMETRES
     // ==========================================
     const urlParams = new URLSearchParams(window.location.search);
-    const RECORD_DURATION = parseInt(urlParams.get('duration') || '18', 10);
+    const RECORD_DURATION = parseInt(urlParams.get('duration') || '30', 10);
+    const RING_COUNT = parseInt(urlParams.get('rings') || '7', 10);
 
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
     const WIDTH = 1080, HEIGHT = 1920;
     const CENTER = { x: WIDTH / 2, y: HEIGHT / 2 };
 
-    // ==========================================
-    // 1. SINTETITZADOR D'ÀUDIO PENTATÒNIC
-    // ==========================================
-    const AudioContext = window.AudioContext || window.webkitAudioContext;
-    const audioCtx = new AudioContext();
-    const audioDest = audioCtx.createMediaStreamDestination();
+    // Registre d'impactes mil·lisegon a mil·lisegon per a la síntesi d'àudio
+    window.soundEvents = [];
+    let startTime = null;
 
-    // Notes harmòniques estil marimba
-    const PENTATONIC = [261.63, 293.66, 329.63, 392.00, 440.00, 523.25, 587.33, 659.25, 783.99, 880.00, 1046.50];
-
-    function playNote(index, isEscape = false) {
-      if (audioCtx.state === 'suspended') audioCtx.resume();
-
-      const osc = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
-
-      const freq = isEscape ? 1174.66 : (PENTATONIC[index % PENTATONIC.length] || 523.25);
-      osc.type = isEscape ? 'triangle' : 'sine';
-      osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
-
-      // Cop sec i percussiu
-      const duration = isEscape ? 0.45 : 0.18;
-      gain.gain.setValueAtTime(0.5, audioCtx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + duration);
-
-      osc.connect(gain);
-      gain.connect(audioCtx.destination);
-      gain.connect(audioDest);
-
-      osc.start();
-      osc.stop(audioCtx.currentTime + duration);
+    function recordSoundHit(noteIndex, isEscape) {
+      if (startTime !== null) {
+        const timeSec = (performance.now() - startTime) / 1000;
+        window.soundEvents.push({
+          time: timeSec,
+          note: noteIndex,
+          isEscape: isEscape
+        });
+      }
     }
 
     // ==========================================
-    // 2. FÍSICA RÀPIDA I DINÀMICA (VIRAL STYLE)
+    // 1. FÍSICA RÀPIDA (VIRALBALLS STYLE)
     // ==========================================
-    const GRAVITY = 0.55;            // Gravetat viva
-    const BOUNCE_ACCEL = 1.018;      // La bola es fa més ràpida a cada rebot
-    const MAX_SPEED = 38;            // Límit de velocitat màxima per mantenir control
-    const BALL_RADIUS = 20;
+    const GRAVITY = 0.58;
+    const BOUNCE_ACCEL = 1.016;
+    const MAX_SPEED = 38;
+    const BALL_RADIUS = 18;
 
     let ball = {
       x: CENTER.x,
-      y: CENTER.y - 70,
-      vx: (Math.random() > 0.5 ? 1 : -1) * (14 + Math.random() * 6), // Sortida ràpida
-      vy: -12,
+      y: CENTER.y - 60,
+      vx: (Math.random() > 0.5 ? 1 : -1) * (15 + Math.random() * 6),
+      vy: -14,
       trail: []
     };
 
-    const RING_COUNT = 5;
-    const BASE_RADIUS = 180;
-    const SPACING = 75;
+    // 7 Anells concèntrics calculats per omplir harmònicament la pantalla 9:16
+    const BASE_RADIUS = 150;
+    const SPACING = 54;
     let rings = [];
 
     for (let i = 0; i < RING_COUNT; i++) {
-      const hue = (i * 55 + 20) % 360;
+      const hue = (i * 48 + 15) % 360;
       rings.push({
         radius: BASE_RADIUS + i * SPACING,
         gapAngle: Math.random() * Math.PI * 2,
-        gapSize: 0.70, // Obertura de ~40 graus
-        speed: (Math.random() > 0.5 ? 1 : -1) * (0.024 + i * 0.006),
+        gapSize: 0.65, // Obertura de ~37 graus
+        speed: (Math.random() > 0.5 ? 1 : -1) * (0.022 + i * 0.005),
         hue: hue,
         color: `hsl(${hue}, 100%, 65%)`,
         alive: true,
-        flash: 0 // Flaix neó en rebre xoc
+        flash: 0
       });
     }
 
@@ -122,10 +105,9 @@
     }
 
     // ==========================================
-    // 3. MOTOR DE COL·LISIÓ SENSE TUNNELING
+    // 2. MOTOR DE COL·LISIÓ SENSE TUNNELING
     // ==========================================
     function updatePhysics() {
-      // 8 sub-passos per fotograma: precisió absoluta a altes velocitats
       const SUB_STEPS = 8;
 
       for (let s = 0; s < SUB_STEPS; s++) {
@@ -133,7 +115,6 @@
         ball.x += ball.vx / SUB_STEPS;
         ball.y += ball.vy / SUB_STEPS;
 
-        // Limitar velocitat màxima si s'accelera massa
         const currentSpeed = Math.hypot(ball.vx, ball.vy);
         if (currentSpeed > MAX_SPEED) {
           ball.vx = (ball.vx / currentSpeed) * MAX_SPEED;
@@ -144,49 +125,42 @@
         const dy = ball.y - CENTER.y;
         const dist = Math.hypot(dx, dy);
 
-        // Vector normal cap enfora
         const nx = dx / (dist || 1);
         const ny = dy / (dist || 1);
 
-        // Angle d'impacte respecte al centre (0 a 2*PI)
         let hitAngle = Math.atan2(dy, dx);
         if (hitAngle < 0) hitAngle += Math.PI * 2;
 
         rings.forEach((ring, idx) => {
           if (!ring.alive) return;
 
-          // La pilota es troba a l'anell
           const contactDist = ring.radius;
           const isTouching = Math.abs(dist - contactDist) <= BALL_RADIUS;
 
           if (isTouching) {
-            // Càlcul de distància angular més curta a l'obertura (sense errors de 360 graus)
             let diff = Math.abs(hitAngle - ring.gapAngle) % (Math.PI * 2);
             if (diff > Math.PI) diff = Math.PI * 2 - diff;
 
             const inGap = diff <= (ring.gapSize / 2);
 
             if (inGap) {
-              // ESCAPAT: Es trenca l'anell
               ring.alive = false;
-              playNote(idx, true);
+              recordSoundHit(idx, true);
               spawnBurst(ball.x, ball.y, ring.hue);
             } else {
-              // REBOT OBLIGATORI (Clamping de posició per evitar tunneling)
               const dot = ball.vx * nx + ball.vy * ny;
 
-              // Si va cap enfora xocant des de dins:
+              // Rebot des de l'interior cap enfora
               if (dist < contactDist && dot > 0) {
                 ball.vx = (ball.vx - 2 * dot * nx) * BOUNCE_ACCEL;
                 ball.vy = (ball.vy - 2 * dot * ny) * BOUNCE_ACCEL;
-                // FIXACIÓ DE POSICIÓ: La bola no pot traspassar la paret
                 ball.x = CENTER.x + nx * (contactDist - BALL_RADIUS);
                 ball.y = CENTER.y + ny * (contactDist - BALL_RADIUS);
 
                 ring.flash = 1.0;
-                playNote(idx, false);
+                recordSoundHit(idx, false);
               }
-              // Si va cap endins xocant des de fora:
+              // Rebot des de l'exterior cap endins
               else if (dist >= contactDist && dot < 0) {
                 ball.vx = (ball.vx - 2 * dot * nx) * BOUNCE_ACCEL;
                 ball.vy = (ball.vy - 2 * dot * ny) * BOUNCE_ACCEL;
@@ -194,14 +168,13 @@
                 ball.y = CENTER.y + ny * (contactDist + BALL_RADIUS);
 
                 ring.flash = 1.0;
-                playNote(idx, false);
+                recordSoundHit(idx, false);
               }
             }
           }
         });
       }
 
-      // Actualitzar rotació d'anells i efecte de flash
       rings.forEach(r => {
         if (r.alive) {
           r.gapAngle = (r.gapAngle + r.speed) % (Math.PI * 2);
@@ -209,19 +182,18 @@
         }
       });
 
-      // Estela
       ball.trail.push({ x: ball.x, y: ball.y });
       if (ball.trail.length > 16) ball.trail.shift();
     }
 
     // ==========================================
-    // 4. RENDERITZAT VISUAL NEÓ
+    // 3. RENDERITZAT VISUAL NEÓ
     // ==========================================
     function render() {
       ctx.fillStyle = '#030712';
       ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
-      // Dibuixar Anells
+      // Anells Neó
       rings.forEach(ring => {
         if (!ring.alive) return;
         ctx.save();
@@ -241,7 +213,7 @@
         ctx.restore();
       });
 
-      // Estela de la pilota
+      // Estela
       ball.trail.forEach((pt, i) => {
         const alpha = (i + 1) / ball.trail.length;
         ctx.fillStyle = `rgba(255, 255, 255, ${alpha * 0.35})`;
@@ -262,7 +234,7 @@
       });
       particles = particles.filter(p => p.life > 0);
 
-      // Pilota brillant
+      // Pilota
       ctx.save();
       ctx.shadowBlur = 25;
       ctx.shadowColor = '#ffffff';
@@ -272,13 +244,13 @@
       ctx.fill();
       ctx.restore();
 
-      // Marca d'aigua pròpia al centre
+      // Marca d'aigua bouncelab.tv
       ctx.font = '600 32px sans-serif';
       ctx.fillStyle = 'rgba(255, 255, 255, 0.20)';
       ctx.textAlign = 'center';
       ctx.fillText('bouncelab.tv', CENTER.x, CENTER.y + 12);
 
-      // Ganxo de text superior estil TikTok
+      // Títol Ganxo superior
       ctx.font = '800 60px sans-serif';
       ctx.fillStyle = '#ffffff';
       ctx.shadowBlur = 18;
@@ -297,30 +269,26 @@
     }
 
     // ==========================================
-    // 5. GRAVACIÓ AUTOMÀTICA
+    // 4. GRAVADOR INTEGRAT
     // ==========================================
     let mediaRecorder;
     let recordedChunks = [];
 
     window.startRecording = function() {
-      if (audioCtx.state === 'suspended') audioCtx.resume();
-
+      startTime = performance.now();
+      window.soundEvents = [];
       recordedChunks = [];
-      const canvasStream = canvas.captureStream(60);
-      const audioStream = audioDest.stream;
-      const combined = new MediaStream([
-        ...canvasStream.getVideoTracks(),
-        ...audioStream.getAudioTracks()
-      ]);
 
-      let mimeType = 'video/webm;codecs=vp8,opus';
-      if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')) {
-        mimeType = 'video/webm;codecs=vp9,opus';
+      const stream = canvas.captureStream(60);
+
+      let mimeType = 'video/webm;codecs=vp8';
+      if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
+        mimeType = 'video/webm;codecs=vp9';
       } else if (MediaRecorder.isTypeSupported('video/webm')) {
         mimeType = 'video/webm';
       }
 
-      mediaRecorder = new MediaRecorder(combined, {
+      mediaRecorder = new MediaRecorder(stream, {
         mimeType: mimeType,
         videoBitsPerSecond: 8000000
       });
