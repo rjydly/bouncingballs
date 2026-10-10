@@ -1,3 +1,4 @@
+import asyncio
 import http.server
 import json
 import os
@@ -6,6 +7,7 @@ import socketserver
 import subprocess
 import threading
 import wave
+import edge_tts
 import numpy as np
 from playwright.sync_api import sync_playwright
 import requests
@@ -18,6 +20,25 @@ MODE_PROVA = True
 # Tria el mode que vols provar: "battle" o "classic"
 SELECTED_MODE = "battle"
 # ==============================================================================
+
+# Llista de 15 frases simples, curtes i directes per a la veu en off
+HOOK_PHRASES = [
+    "Which ball will last longer?",
+    "Which color will win?",
+    "Which ball will survive?",
+    "Who will be the last one standing?",
+    "Pick a color right now!",
+    "Guess which ball wins!",
+    "Which color is going to lose first?",
+    "Which ball will be eliminated first?",
+    "Can you guess the winner?",
+    "Which color will make it to the end?",
+    "Pick your ball before it starts!",
+    "Which one is going to survive?",
+    "Who is winning this battle?",
+    "Which color are you betting on?",
+    "Who is going to lose?",
+]
 
 PORT = 8080
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -32,6 +53,55 @@ def start_local_server():
     thread.daemon = True
     thread.start()
     print(f"Servidor web local actiu a http://localhost:{PORT}")
+
+
+# Generador de veu en off amb Edge-TTS
+async def _async_generate_voice(text, output_mp3):
+    communicate = edge_tts.Communicate(
+        text, voice="en-US-ChristopherNeural", rate="+10%"
+    )
+    await communicate.save(output_mp3)
+
+
+def generate_tts_intro():
+    chosen_phrase = random.choice(HOOK_PHRASES)
+    print(f"🎙️ Generant veu Edge-TTS: \"{chosen_phrase}\"")
+
+    temp_mp3 = "temp_tts.mp3"
+    temp_wav = "temp_tts.wav"
+
+    asyncio.run(_async_generate_voice(chosen_phrase, temp_mp3))
+
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            temp_mp3,
+            "-ar",
+            "44100",
+            "-ac",
+            "1",
+            temp_wav,
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    tts_audio = None
+    if os.path.exists(temp_wav):
+        with wave.open(temp_wav, "rb") as wf:
+            n_frames = wf.getnframes()
+            data = wf.readframes(n_frames)
+            tts_audio = (
+                np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
+            )
+        os.remove(temp_wav)
+
+    if os.path.exists(temp_mp3):
+        os.remove(temp_mp3)
+
+    return tts_audio, chosen_phrase
 
 
 def load_random_meme_sound():
@@ -75,7 +145,9 @@ def load_random_meme_sound():
     with wave.open(temp_wav, "rb") as wf:
         n_frames = wf.getnframes()
         data = wf.readframes(n_frames)
-        meme_audio = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
+        meme_audio = (
+            np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
+        )
 
     if os.path.exists(temp_wav):
         os.remove(temp_wav)
@@ -84,7 +156,11 @@ def load_random_meme_sound():
 
 
 def synthesize_soundtrack(
-    sound_events, duration_sec, meme_audio=None, output_wav="audio.wav"
+    sound_events,
+    duration_sec,
+    meme_audio=None,
+    tts_audio=None,
+    output_wav="audio.wav",
 ):
     SAMPLE_RATE = 44100
     total_samples = int((duration_sec + 1) * SAMPLE_RATE)
@@ -104,6 +180,13 @@ def synthesize_soundtrack(
         1046.50,
     ]
 
+    # 1. Veu Edge-TTS a l'inici
+    if tts_audio is not None:
+        start_tts = int(0.25 * SAMPLE_RATE)
+        n_tts = min(len(tts_audio), total_samples - start_tts)
+        audio_data[start_tts : start_tts + n_tts] += tts_audio[:n_tts] * 1.25
+
+    # 2. Xocs i mems a la mort
     for ev in sound_events:
         t_sec = ev.get("time", 0)
         note_idx = ev.get("note", 0)
@@ -113,7 +196,6 @@ def synthesize_soundtrack(
         if start_sample >= total_samples:
             continue
 
-        # A CADA MORT D'UNA BOLA: SONA EL MEM!
         if is_escape and meme_audio is not None:
             n_samples = min(len(meme_audio), total_samples - start_sample)
             audio_data[start_sample : start_sample + n_samples] += (
@@ -156,13 +238,14 @@ def synthesize_soundtrack(
         wf.writeframes(audio_int16.tobytes())
 
     print(
-        f"🎵 Àudio sintetitzat ({len(sound_events)} impactes, {duration_sec:.1f}s)."
+        f"🎵 Àudio sintetitzat ({len(sound_events)} impactes + veu TTS, {duration_sec:.1f}s)."
     )
 
 
 def run():
     start_local_server()
     meme_audio, meme_name = load_random_meme_sound()
+    tts_audio, tts_phrase = generate_tts_intro()
 
     active_mode = SELECTED_MODE
     print(f"🧪 [MODE PROVA: {active_mode.upper()}]")
@@ -190,7 +273,7 @@ def run():
         page.wait_for_timeout(1000)
 
         total_fighters = page.evaluate("window.ringCount || 5")
-        print(f"⚔️ Batalla iniciada amb {total_fighters} boles competint!")
+        print(f"⚔️ Batalla iniciada amb {total_fighters} boles!")
 
         raw_video = "raw_simulation.webm"
 
@@ -210,11 +293,12 @@ def run():
         browser.close()
 
     audio_file = "simulation_audio.wav"
-    synthesize_soundtrack(sound_events, actual_duration, meme_audio, audio_file)
+    synthesize_soundtrack(
+        sound_events, actual_duration, meme_audio, tts_audio, audio_file
+    )
 
     final_mp4 = "bouncelab_video.mp4"
-    print("Empaquetant MP4 final amb FFmpeg a 60 FPS constants...")
-    # Afegim -r 60 i -vsync cfr per garantir que el vídeo vagi a 60 FPS constants sense estrebades
+    print("Empaquetant MP4 final amb FFmpeg...")
     subprocess.run(
         [
             "ffmpeg",
@@ -253,11 +337,12 @@ def run():
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID and os.path.exists(final_mp4):
         print("Enviant el vídeo per Telegram...")
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVideo"
-        meme_caption = f"\n🔊 So de mort (mem): {meme_name}" if meme_name else ""
+        meme_caption = f"\n🔊 So mem: {meme_name}" if meme_name else ""
         caption_text = (
             f"⚔️ [STRING BATTLE ROYALE]\n"
+            f"🎙️ Hook: \"{tts_phrase}\"\n"
             f"🔥 {total_fighters} boles enfrontades!\n"
-            f"🏆 Guanyador invicte: {winner_name}!\n"
+            f"🏆 Guanyador: {winner_name}!\n"
             f"⏱️ Durada: {actual_duration:.1f}s{meme_caption}\n"
             f"Canal: @bouncelab.tv 🚀"
         )
