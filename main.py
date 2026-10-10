@@ -1,6 +1,7 @@
 import http.server
 import json
 import os
+import random
 import socketserver
 import subprocess
 import threading
@@ -12,6 +13,7 @@ import requests
 PORT = 8080
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+ASSETS_AUDIO_DIR = os.path.join(os.path.dirname(__file__), "assets", "audio")
 
 
 def start_local_server():
@@ -23,7 +25,60 @@ def start_local_server():
     print(f"Servidor web local actiu a http://localhost:{PORT}")
 
 
-def synthesize_soundtrack(sound_events, duration_sec, output_wav="audio.wav"):
+# Carrega un so mem aleatori de la carpeta assets/audio (si n'hi ha)
+def load_random_meme_sound():
+    valid_exts = (".mp3", ".wav", ".ogg", ".m4a")
+    if not os.path.exists(ASSETS_AUDIO_DIR):
+        os.makedirs(ASSETS_AUDIO_DIR, exist_ok=True)
+        return None, None
+
+    audio_files = [
+        f for f in os.listdir(ASSETS_AUDIO_DIR) if f.lower().endswith(valid_exts)
+    ]
+
+    if not audio_files:
+        print("ℹ️ Carpeta assets/audio buida: s'usarà el so sintètic per defecte.")
+        return None, None
+
+    chosen_filename = random.choice(audio_files)
+    chosen_path = os.path.join(ASSETS_AUDIO_DIR, chosen_filename)
+    print(f"🎲 Mem triat per a aquest vídeo: {chosen_filename}")
+
+    # Convertir l'àudio a PCM mono 44.1kHz net amb FFmpeg
+    temp_wav = "temp_meme.wav"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            chosen_path,
+            "-ar",
+            "44100",
+            "-ac",
+            "1",
+            temp_wav,
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    if not os.path.exists(temp_wav):
+        return None, None
+
+    with wave.open(temp_wav, "rb") as wf:
+        n_frames = wf.getnframes()
+        data = wf.readframes(n_frames)
+        meme_audio = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
+
+    if os.path.exists(temp_wav):
+        os.remove(temp_wav)
+
+    return meme_audio, chosen_filename
+
+
+def synthesize_soundtrack(
+    sound_events, duration_sec, meme_audio=None, output_wav="audio.wav"
+):
     SAMPLE_RATE = 44100
     total_samples = int((duration_sec + 1) * SAMPLE_RATE)
     audio_data = np.zeros(total_samples, dtype=np.float32)
@@ -51,26 +106,37 @@ def synthesize_soundtrack(sound_events, duration_sec, output_wav="audio.wav"):
         if start_sample >= total_samples:
             continue
 
-        freq = (
-            1174.66
-            if is_escape
-            else FREQUENCIES[note_idx % len(FREQUENCIES)]
-        )
-        note_len = 0.45 if is_escape else 0.18
-        n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
-        t = np.linspace(0, note_len, n_samples, False)
+        # QUAN SE SUPERA UN CERCLE (ESCAPE)
+        if is_escape and meme_audio is not None:
+            # Reproduir el mem seleccionat
+            n_samples = min(len(meme_audio), total_samples - start_sample)
+            audio_data[start_sample : start_sample + n_samples] += (
+                meme_audio[:n_samples] * 0.95
+            )
+        else:
+            # So percussiu de marimba per defecte
+            freq = (
+                1174.66
+                if is_escape
+                else FREQUENCIES[note_idx % len(FREQUENCIES)]
+            )
+            note_len = 0.45 if is_escape else 0.18
+            n_samples = min(
+                int(note_len * SAMPLE_RATE), total_samples - start_sample
+            )
+            t = np.linspace(0, note_len, n_samples, False)
 
-        decay_rate = 12 if is_escape else 20
-        envelope = np.exp(-decay_rate * t)
+            decay_rate = 12 if is_escape else 20
+            envelope = np.exp(-decay_rate * t)
 
-        wave_tone = (
-            0.60 * np.sin(2 * np.pi * freq * t)
-            + 0.25 * np.sin(2 * np.pi * (freq * 2) * t)
-            + 0.15 * np.sin(2 * np.pi * (freq * 3) * t)
-        )
-        audio_data[start_sample : start_sample + n_samples] += (
-            wave_tone * envelope
-        )
+            wave_tone = (
+                0.60 * np.sin(2 * np.pi * freq * t)
+                + 0.25 * np.sin(2 * np.pi * (freq * 2) * t)
+                + 0.15 * np.sin(2 * np.pi * (freq * 3) * t)
+            )
+            audio_data[start_sample : start_sample + n_samples] += (
+                wave_tone * envelope
+            )
 
     max_amp = np.max(np.abs(audio_data))
     if max_amp > 0:
@@ -85,12 +151,15 @@ def synthesize_soundtrack(sound_events, duration_sec, output_wav="audio.wav"):
         wf.writeframes(audio_int16.tobytes())
 
     print(
-        f"🎵 Pista d'àudio sintetitzada ({len(sound_events)} impactes, {duration_sec:.1f}s)."
+        f"🎵 Àudio sintetitzat ({len(sound_events)} impactes, {duration_sec:.1f}s)."
     )
 
 
 def run():
     start_local_server()
+
+    # Seleccionar mem aleatori d'assets/audio/
+    meme_audio, meme_name = load_random_meme_sound()
 
     with sync_playwright() as p:
         print("Iniciant Firefox en mode headless...")
@@ -110,7 +179,6 @@ def run():
 
         raw_video = "raw_simulation.webm"
 
-        # Espera que la partida arribi al desenllaç
         with page.expect_download(timeout=90000) as download_info:
             print("Iniciant duel i gravació...")
             page.evaluate("window.startRecording()")
@@ -122,13 +190,13 @@ def run():
         download = download_info.value
         download.save_as(raw_video)
         print(
-            f"Duel completat! Guanyador: {winner_name} en {actual_duration:.1f} segons."
+            f"Duel completat! Guanyador: {winner_name} en {actual_duration:.1f}s."
         )
         browser.close()
 
-    # Generar àudio amb la durada exacta
+    # Generar pista d'àudio integrant el mem a cada cercle superat
     audio_file = "simulation_audio.wav"
-    synthesize_soundtrack(sound_events, actual_duration, audio_file)
+    synthesize_soundtrack(sound_events, actual_duration, meme_audio, audio_file)
 
     # Empaquetar MP4
     final_mp4 = "bouncelab_video.mp4"
@@ -164,16 +232,24 @@ def run():
         if os.path.exists(tmp):
             os.remove(tmp)
 
-    # Enviar a Telegram amb el guanyador indicat
+    # Enviar a Telegram
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID and os.path.exists(final_mp4):
         print("Enviant el vídeo per Telegram...")
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVideo"
+        meme_caption = f"\n🔊 So mem: {meme_name}" if meme_name else ""
+        caption_text = (
+            f"🎬 Duel finalitzat!\n"
+            f"🏆 Guanyador: {winner_name}!\n"
+            f"⏱️ Durada: {actual_duration:.1f}s{meme_caption}\n"
+            f"Canal: @bouncelab.tv 🔥"
+        )
+
         with open(final_mp4, "rb") as f:
             res = requests.post(
                 url,
                 data={
                     "chat_id": TELEGRAM_CHAT_ID,
-                    "caption": f"🎬 Duel finalitzat!\n🏆 Guanyador: {winner_name}!\n⏱️ Durada: {actual_duration:.1f}s\nCanal: @bouncelab.tv 🔥",
+                    "caption": caption_text,
                     "supports_streaming": True,
                 },
                 files={"video": f},
