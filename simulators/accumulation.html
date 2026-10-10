@@ -43,7 +43,7 @@
 
   <script>
     // ============================================================
-    // 0. CONFIGURACIÓ GLOBAL I PALETA NEÓ
+    // 0. CONFIGURACIÓ GLOBAL I CONSTANTS FÍSIQUES
     // ============================================================
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
@@ -52,13 +52,16 @@
 
     const ARENA_RADIUS = 410;
     const BALL_RADIUS = 21;
-    const GRAVITY = 950;          // Gravetat realista cap avall (px/s²)
-    const INITIAL_SPEED = 620;    // Impuls inicial
-    const BOUNCE_RESTITUTION = 1.015;
+    const GRAVITY = 950;              // Gravetat realista (px/s²)
+    const INITIAL_SPEED = 620;        // Impuls inicial
+    const BOUNCE_RESTITUTION = 1.015; // Elasticitat als rebots
     const MAX_SPEED = 920;
     const MIN_SPEED = 380;
 
-    // Paleta de colors neó vibrants
+    // LÍMITS DE DURADA ESTRICTES: Entre 18s i 1 minut 20s (80s)
+    const STRICT_MIN_DURATION = 18.0;
+    const STRICT_MAX_DURATION = 80.0;
+
     const NEON_PALETTE = [
       { color: '#00f2fe', glow: '#00f2fe', name: 'CYAN' },
       { color: '#ff007f', glow: '#ff007f', name: 'PINK' },
@@ -104,16 +107,14 @@
       };
     }
 
-    // Retorna un temps aleatori entre 1.5s i 3.5s
-    function getRandomFreezeTime(rnd) {
-      return 1.5 + rnd() * 2.0;
-    }
-
     // ============================================================
-    // 2. PRE-SIMULACIÓ (TROBA PARTIDA GARANTIDA ENTRE 20s I 36s)
+    // 2. PRE-SIMULACIÓ MATEMÀTICA (FILTRE 18s - 80s)
     // ============================================================
     function simulateCandidate(seed) {
       const rnd = createPRNG(seed);
+      // Temps fix aleatori entre 1.5s i 3.5s per a aquest vídeo
+      const timePerBall = Math.round((1.5 + rnd() * 2.0) * 10) / 10;
+
       let gapAngle = rnd() * Math.PI * 2;
       const rotSpeed = 0.55;
       const gapSize = 0.52; // ~30 graus
@@ -127,11 +128,11 @@
         y: CENTER.y - 40,
         vx: Math.cos(ballAng) * INITIAL_SPEED,
         vy: Math.sin(ballAng) * INITIAL_SPEED,
-        timer: getRandomFreezeTime(rnd)
+        timer: timePerBall
       };
 
       const DT = 1 / 60;
-      const MAX_SIM_TIME = 45;
+      const MAX_SIM_TIME = STRICT_MAX_DURATION + 1.0;
 
       while (simTime < MAX_SIM_TIME) {
         simTime += DT;
@@ -163,10 +164,13 @@
           if (diff > Math.PI) diff = Math.PI * 2 - diff;
 
           if (diff <= gapSize / 2) {
-            if (simTime >= 20.0 && simTime <= 36.0 && frozen.length >= 5) {
-              return { success: true, duration: simTime, frozenCount: frozen.length, seed };
+            // La bola escapa!
+            // Comprovem si compleix estrictament el rang [18s - 80s]
+            if (simTime >= STRICT_MIN_DURATION && simTime <= STRICT_MAX_DURATION) {
+              return { success: true, duration: simTime, frozenCount: frozen.length, seed, timePerBall };
             }
-            return { success: false };
+            // Si és menor a 18s o major a 80s, la descartem automàticament
+            return { success: false, duration: simTime };
           } else {
             const nx = dx / (dist || 1);
             const ny = dy / (dist || 1);
@@ -180,6 +184,7 @@
           }
         }
 
+        // Col·lisió amb boles congelades
         for (let i = 0; i < frozen.length; i++) {
           const f = frozen[i];
           const fdx = b.x - f.x;
@@ -199,7 +204,7 @@
           }
         }
 
-        // Temps de congelació esgotat
+        // Temps esgotat: congelar i generar nova bola
         if (b.timer <= 0) {
           frozen.push({ x: b.x, y: b.y });
           const newAng = rnd() * Math.PI * 2;
@@ -208,33 +213,57 @@
             y: CENTER.y - 40,
             vx: Math.cos(newAng) * INITIAL_SPEED,
             vy: Math.sin(newAng) * INITIAL_SPEED,
-            timer: getRandomFreezeTime(rnd)
+            timer: timePerBall
           };
         }
       }
-      return { success: false };
+
+      // Si ha superat els 80s, es descarta
+      return { success: false, duration: simTime };
     }
 
-    function findBestSeed() {
-      let bestFallback = 24;
-      for (let s = 1; s < 800; s++) {
+    function findBestSimulation() {
+      console.log(`🔍 Cercant partida amb durada garantida entre ${STRICT_MIN_DURATION}s i ${STRICT_MAX_DURATION}s (1 min 20s)...`);
+      let bestCandidate = null;
+      let closestDistance = Infinity;
+
+      for (let s = 1; s < 1200; s++) {
         const res = simulateCandidate(s);
         if (res.success) {
-          console.log(`✅ Partida òptima trobada! Seed: ${s}, durada: ${res.duration.toFixed(1)}s, congelades: ${res.frozenCount}`);
-          return s;
+          console.log(`✅ PARTIDA ÒPTIMA TROBADA (Intent #${s})! Durada: ${res.duration.toFixed(1)}s, Temps/bola: ${res.timePerBall}s, Congelades: ${res.frozenCount}`);
+          return res;
+        }
+
+        if (res.duration) {
+          const distToRange = res.duration < STRICT_MIN_DURATION 
+            ? STRICT_MIN_DURATION - res.duration 
+            : Math.max(0, res.duration - STRICT_MAX_DURATION);
+          if (distToRange < closestDistance) {
+            closestDistance = distToRange;
+            bestCandidate = { seed: s, timePerBall: Math.round((1.5 + Math.random() * 2.0) * 10) / 10 };
+          }
         }
       }
-      return bestFallback;
+
+      return bestCandidate || { seed: 42, timePerBall: 2.4 };
     }
 
-    const optimalSeed = findBestSeed();
+    const optimalMatch = findBestSimulation();
+    const optimalSeed = optimalMatch.seed;
+    const TIME_PER_BALL = optimalMatch.timePerBall; // TEMPS FIX PER A TOTES LES BOLES D'AQUEST VÍDEO
+
     const gameRND = createPRNG(optimalSeed);
+    // Sincronitzar el PRNG
+    gameRND();
 
     // ============================================================
-    // 3. COLOR DEL CERCLE I ESTAT DEL JOC
+    // 3. COLORS ALEATORIS INDEPENDENTS
     // ============================================================
-    // Color aleatori independent per al cercle
-    const ringColorObj = NEON_PALETTE[Math.floor(gameRND() * NEON_PALETTE.length)];
+    const ringColorIdx = Math.floor(Math.random() * NEON_PALETTE.length);
+    const ringColorObj = NEON_PALETTE[ringColorIdx];
+
+    const availableBallColors = NEON_PALETTE.filter((_, idx) => idx !== ringColorIdx);
+    const ballColorObj = availableBallColors[Math.floor(Math.random() * availableBallColors.length)];
 
     let ring = {
       radius: ARENA_RADIUS,
@@ -248,17 +277,15 @@
     let frozenBalls = [];
     let currentBallNumber = 1;
 
-    // Primer color de bola aleatori independent
-    const firstBallColorObj = NEON_PALETTE[Math.floor(gameRND() * NEON_PALETTE.length)];
     let activeBallAng = gameRND() * Math.PI * 2;
     let activeBall = {
       x: CENTER.x,
       y: CENTER.y - 40,
       vx: Math.cos(activeBallAng) * INITIAL_SPEED,
       vy: Math.sin(activeBallAng) * INITIAL_SPEED,
-      timer: getRandomFreezeTime(gameRND),
-      color: firstBallColorObj.color,
-      glow: firstBallColorObj.glow,
+      timer: TIME_PER_BALL,
+      color: ballColorObj.color,
+      glow: ballColorObj.glow,
       trail: []
     };
 
@@ -295,7 +322,7 @@
     }
 
     // ============================================================
-    // 4. BUCLE DE FÍSICA AMB GRAVETAT I TIMERS ALEATORIS
+    // 4. BUCLE DE FÍSICA
     // ============================================================
     function updatePhysics(dt) {
       if (!isRunning || hasEscaped) return;
@@ -333,7 +360,7 @@
           if (diff > Math.PI) diff = Math.PI * 2 - diff;
 
           if (diff <= ring.gapSize / 2) {
-            // HA ESCAPAT!
+            // Ha escapat per l'escletxa!
             if (dist > ARENA_RADIUS + BALL_RADIUS + 10) {
               hasEscaped = true;
               isFinished = true;
@@ -389,10 +416,10 @@
         }
       }
 
-      activeBall.trail.push({ x: activeBall.x, y: activeBall.y, color: activeBall.color });
+      activeBall.trail.push({ x: activeBall.x, y: activeBall.y });
       if (activeBall.trail.length > 14) activeBall.trail.shift();
 
-      // Temps esgotat: congelar i generar nova bola amb color i timer aleatori
+      // Temps esgotat: congelar i generar nova bola amb el mateix temps
       if (activeBall.timer <= 0) {
         frozenBalls.push({
           x: activeBall.x,
@@ -404,7 +431,6 @@
         recordSound('freeze', 5);
 
         currentBallNumber++;
-        const nextColObj = NEON_PALETTE[Math.floor(gameRND() * NEON_PALETTE.length)];
         const nextAng = gameRND() * Math.PI * 2;
 
         activeBall = {
@@ -412,9 +438,9 @@
           y: CENTER.y - 40,
           vx: Math.cos(nextAng) * INITIAL_SPEED,
           vy: Math.sin(nextAng) * INITIAL_SPEED,
-          timer: getRandomFreezeTime(gameRND), // 1.5s a 3.5s aleatori
-          color: nextColObj.color,
-          glow: nextColObj.glow,
+          timer: TIME_PER_BALL,
+          color: ballColorObj.color,
+          glow: ballColorObj.glow,
           trail: []
         };
       }
@@ -452,12 +478,12 @@
       ctx.fillText(titleHighlight, startX + ctx.measureText(titlePrefix).width, 310);
 
       ctx.textAlign = 'center';
-      ctx.font = '700 28px Lexend, sans-serif';
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
-      ctx.fillText("RANDOM FREEZE TIMER (1.5s - 3.5s)", CENTER.x, 365);
+      ctx.font = '700 30px Lexend, sans-serif';
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.65)';
+      ctx.fillText(`FREEZES EVERY ${TIME_PER_BALL.toFixed(1)}s`, CENTER.x, 365);
       ctx.restore();
 
-      // Anell exterior amb color aleatori independent
+      // Anell exterior
       ctx.save();
       ctx.shadowBlur = 20;
       ctx.shadowColor = ring.glow;
@@ -482,7 +508,7 @@
       });
       iceSparks = iceSparks.filter(s => s.life > 0);
 
-      // Partícules de victòria
+      // Partícules de celebració
       particles.forEach(p => {
         p.x += p.vx;
         p.y += p.vy;
@@ -494,7 +520,7 @@
       });
       particles = particles.filter(p => p.life > 0);
 
-      // Boles congelades amb el seu color propi + efecte gel
+      // Boles congelades
       frozenBalls.forEach(fb => {
         ctx.save();
         ctx.shadowBlur = 10;
@@ -511,11 +537,11 @@
         ctx.restore();
       });
 
-      // Estela de la bola activa amb el seu color
+      // Estela
       activeBall.trail.forEach((pt, i) => {
         const alpha = (i + 1) / activeBall.trail.length;
         ctx.save();
-        ctx.fillStyle = pt.color;
+        ctx.fillStyle = activeBall.color;
         ctx.globalAlpha = alpha * 0.35;
         ctx.beginPath();
         ctx.arc(pt.x, pt.y, BALL_RADIUS * alpha * 0.85, 0, Math.PI * 2);
@@ -524,7 +550,7 @@
       });
       ctx.globalAlpha = 1.0;
 
-      // Bola activa amb el seu color propi
+      // Bola activa
       ctx.save();
       ctx.shadowBlur = 24;
       ctx.shadowColor = activeBall.glow;
@@ -534,14 +560,14 @@
       ctx.fill();
       ctx.restore();
 
-      // Comptador de temps restant de la bola actual
+      // HUD de compte enrere
       if (!hasEscaped) {
         const timeLeft = Math.max(0, activeBall.timer);
         ctx.save();
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.font = '900 68px Lexend, sans-serif';
-        ctx.fillStyle = timeLeft < 0.8 ? '#ef4444' : 'rgba(255, 255, 255, 0.20)';
+        ctx.fillStyle = timeLeft < 0.7 ? '#ef4444' : 'rgba(255, 255, 255, 0.20)';
         ctx.fillText(timeLeft.toFixed(1) + 's', CENTER.x, CENTER.y);
         ctx.restore();
       } else {
@@ -621,12 +647,13 @@
 
       mediaRecorder.start();
 
+      // Topall de seguretat ampli per cobrir partides de fins a 80s
       setTimeout(() => {
         if (mediaRecorder.state !== 'inactive') {
           window.actualDuration = (performance.now() - startTime) / 1000;
           mediaRecorder.stop();
         }
-      }, 42000);
+      }, 92000);
     };
 
     document.fonts.ready.then(() => {
