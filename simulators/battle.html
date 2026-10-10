@@ -79,12 +79,12 @@
     ];
 
     // ==========================================
-    // 2. FÍSICA: 4 A 5 BOLES MÀXIM
+    // 2. FÍSICA: +3.5% D'ACCELERACIÓ PER REBOT
     // ==========================================
-    const GRAVITY = 0.0;                   // Zero gravity: recorregut lliure per tota l'arena
-    const INITIAL_SPEED = 9.0;             // Mateixa velocitat inicial per a totes
+    const GRAVITY = 0.0;                   // Zero gravity: moviment lliure en 360°
+    const INITIAL_SPEED = 8.5;             // Mateixa velocitat inicial per a totes les boles
     const MIN_SPEED = 8.0;
-    const INDIVIDUAL_BOUNCE_ACCEL = 1.022; // +2.2% a cada rebot de paret
+    const INDIVIDUAL_BOUNCE_ACCEL = 1.035; // +3.5% a cada rebot de paret
     const MAX_SPEED = 42;
     const BALL_RADIUS = 20;
 
@@ -100,11 +100,10 @@
     }
 
     function generateBattleCandidate() {
-      // 4 O 5 BOLES MÀXIM PER OPTIMITZAR ELS RUNNERS DE GITHUB
+      // 4 o 5 boles màxim per mantenir fluïdesa
       const numBalls = Math.random() < 0.5 ? 4 : 5;
       const shuffledColors = [...PALETTE].sort(() => Math.random() - 0.5).slice(0, numBalls);
 
-      // 120 ÀNCORES TOTALS (24 a 30 cordes per bola a l'inici)
       const TOTAL_ANCHORS = 120;
       const anchorsPerBall = Math.floor(TOTAL_ANCHORS / numBalls);
 
@@ -185,7 +184,7 @@
             const dy = ball.y - CENTER.y;
             const dist = Math.hypot(dx, dy);
 
-            // Rebot de paret: afegeix una corda nova
+            // Rebot de paret: afegeix una corda nova i accelera +3.5%
             if (dist >= ARENA_RADIUS - ball.radius) {
               const nx = dx / (dist || 1);
               const ny = dy / (dist || 1);
@@ -247,7 +246,7 @@
             }
           }
 
-          // 3. TALL FÍSIC ESTRICTE DE CORDES (Sense immunitats fantasma)
+          // 3. Tall físic estricte de cordes
           for (let b = 0; b < testBalls.length; b++) {
             const cutter = testBalls[b];
             if (!cutter.alive) continue;
@@ -261,13 +260,12 @@
                 const line = target.lines[l];
                 const d = distToSegment(cutter.x, cutter.y, line.ax, line.ay, target.x, target.y);
 
-                // Si la bola toca físicament la corda, la talla
                 if (d <= cutter.radius + 2.0) {
                   target.lines.splice(l, 1);
                   if (target.lines.length === 0) {
                     target.alive = false;
                   }
-                  break; // 1 corda per sub-pas per mantenir fluïdesa
+                  break;
                 }
               }
             }
@@ -367,7 +365,7 @@
           const dy = ball.y - CENTER.y;
           const dist = Math.hypot(dx, dy);
 
-          // Rebot de paret: afegeix nova corda
+          // Rebot de paret: afegeix nova corda i accelera +3.5%
           if (dist >= ARENA_RADIUS - ball.radius) {
             const nx = dx / (dist || 1);
             const ny = dy / (dist || 1);
@@ -447,7 +445,6 @@
               const line = target.lines[l];
               const d = distToSegment(cutter.x, cutter.y, line.ax, line.ay, target.x, target.y);
 
-              // Si la bola toca la corda, la talla sempre
               if (d <= cutter.radius + 2.0) {
                 target.lines.splice(l, 1);
 
@@ -455,7 +452,7 @@
                   cutSparks.push({ x: cutter.x, y: cutter.y, life: 10, color: target.color });
                 }
 
-                // Si es queda a 0 cordes -> MORT
+                // Eliminació en quedar-se a 0 cordes
                 if (target.lines.length === 0) {
                   target.alive = false;
                   spawnDeathBurst(target.x, target.y, target.color);
