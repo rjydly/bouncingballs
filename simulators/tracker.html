@@ -36,6 +36,7 @@
     const ARENA_RADIUS = 390;
     const BALL_RADIUS = 22;
     const NUM_BALLS = 15;
+    const BALL_SPEED = 580; // Velocitat dinàmica i fluida en px/s
 
     const COLOR_BLUE = '#38bdf8';
     const COLOR_RED = '#ef4444';
@@ -49,7 +50,7 @@
         const timeSec = (performance.now() - startTime) / 1000;
         window.soundEvents.push({
           time: timeSec,
-          type: type,
+          type: type, // 'tick', 'pop', 'reveal'
           note: note,
           isEscape: type === 'reveal'
         });
@@ -95,22 +96,23 @@
     let isRunning = false;
     let isFinished = false;
 
-    let lastTickSecond = -1;
+    let shuffleStarted = false;
     let slotAssigned = false;
     let revealDone = false;
+    let lastTickSecond = -1;
+    let lastRevealedNumIndex = 0;
 
     // ============================================================
-    // 2. FÍSICA DE SHUFFLING
+    // 2. INICIACIÓ DEL SHUFFLING (TOTES VERMELLES I EN MOVIMENT)
     // ============================================================
     function initShufflePhysics() {
-      const BASE_SPEED = 14.5;
       balls.forEach(b => {
-        b.color = COLOR_RED;
+        b.color = COLOR_RED; // Totes es tornen vermelles
+        // Impuls inicial cap a l'interior de l'arena
         const toCenterAng = Math.atan2(CENTER.y - b.y, CENTER.x - b.x);
-        const randAng = toCenterAng + (Math.random() - 0.5) * 1.2;
-        const spd = BASE_SPEED + (Math.random() - 0.5) * 2;
-        b.vx = Math.cos(randAng) * spd;
-        b.vy = Math.sin(randAng) * spd;
+        const randAng = toCenterAng + (Math.random() - 0.5) * 1.1;
+        b.vx = Math.cos(randAng) * BALL_SPEED;
+        b.vy = Math.sin(randAng) * BALL_SPEED;
       });
     }
 
@@ -119,6 +121,7 @@
       const stepDt = dt / SUB_STEPS;
 
       for (let s = 0; s < SUB_STEPS; s++) {
+        // 1. Moure boles i rebotar a la paret circular
         balls.forEach(ball => {
           ball.x += ball.vx * stepDt;
           ball.y += ball.vy * stepDt;
@@ -126,8 +129,9 @@
           const dx = ball.x - CENTER.x;
           const dy = ball.y - CENTER.y;
           const dist = Math.hypot(dx, dy);
+          const maxDist = ARENA_RADIUS - ball.radius;
 
-          if (dist >= ARENA_RADIUS - ball.radius) {
+          if (dist >= maxDist) {
             const nx = dx / (dist || 1);
             const ny = dy / (dist || 1);
             const dot = ball.vx * nx + ball.vy * ny;
@@ -135,17 +139,17 @@
             if (dot > 0) {
               const rx = ball.vx - 2 * dot * nx;
               const ry = ball.vy - 2 * dot * ny;
-              const ang = Math.atan2(ry, rx) + (Math.random() - 0.5) * 0.08;
-              const spd = Math.hypot(rx, ry);
+              const ang = Math.atan2(ry, rx) + (Math.random() - 0.5) * 0.06;
 
-              ball.vx = Math.cos(ang) * spd;
-              ball.vy = Math.sin(ang) * spd;
-              ball.x = CENTER.x + nx * (ARENA_RADIUS - ball.radius);
-              ball.y = CENTER.y + ny * (ARENA_RADIUS - ball.radius);
+              ball.vx = Math.cos(ang) * BALL_SPEED;
+              ball.vy = Math.sin(ang) * BALL_SPEED;
+              ball.x = CENTER.x + nx * maxDist;
+              ball.y = CENTER.y + ny * maxDist;
             }
           }
         });
 
+        // 2. Xoc elàstic entre boles
         for (let i = 0; i < balls.length; i++) {
           for (let j = i + 1; j < balls.length; j++) {
             const b1 = balls[i], b2 = balls[j];
@@ -154,7 +158,7 @@
             const dist = Math.hypot(cdx, cdy);
             const minDist = b1.radius + b2.radius;
 
-            if (dist < minDist && dist > 0) {
+            if (dist < minDist && dist > 0.001) {
               const cnx = cdx / dist;
               const cny = cdy / dist;
 
@@ -173,6 +177,15 @@
                 b1.vy -= velNorm * cny;
                 b2.vx += velNorm * cnx;
                 b2.vy += velNorm * cny;
+
+                // Mantenir la velocitat constant perquè no perdin embranzida
+                const spd1 = Math.hypot(b1.vx, b1.vy) || 1;
+                b1.vx = (b1.vx / spd1) * BALL_SPEED;
+                b1.vy = (b1.vy / spd1) * BALL_SPEED;
+
+                const spd2 = Math.hypot(b2.vx, b2.vy) || 1;
+                b2.vx = (b2.vx / spd2) * BALL_SPEED;
+                b2.vy = (b2.vy / spd2) * BALL_SPEED;
               }
             }
           }
@@ -204,7 +217,7 @@
     }
 
     // ============================================================
-    // 3. RENDERITZAT
+    // 3. RENDERITZAT I CONTROL DE FASES
     // ============================================================
     let lastTime = null;
 
@@ -241,7 +254,7 @@
       ctx.textAlign = 'center';
       ctx.fillText('@bouncelab.tv', CENTER.x, 1680);
 
-      // Arena circular
+      // Arena circular blanca
       ctx.save();
       ctx.strokeStyle = '#ffffff';
       ctx.lineWidth = 4;
@@ -252,8 +265,8 @@
 
       if (isRunning) {
         if (elapsed < 3.0) {
-          // FASE 1: COUNTDOWN 3..2..1
-          const countdown = Math.ceil(3.0 - elapsed);
+          // FASE 1: COUNTDOWN 3.. 2.. 1..
+          const countdown = Math.max(1, Math.ceil(3.0 - elapsed));
           if (countdown !== lastTickSecond) {
             lastTickSecond = countdown;
             recordSound('tick', countdown);
@@ -299,9 +312,11 @@
           }
 
         } else if (elapsed < 18.0) {
-          // FASE 2: SHUFFLING 15s
-          if (lastTickSecond === -1 || lastTickSecond > 15) {
+          // FASE 2: SHUFFLING CAÒTIC (15s)
+          if (!shuffleStarted) {
+            shuffleStarted = true;
             initShufflePhysics();
+            lastTickSecond = 16;
           }
 
           const timeLeft = Math.max(1, Math.ceil(18.0 - elapsed));
@@ -321,7 +336,7 @@
           updatePhysics(dt);
 
         } else if (elapsed < 19.8) {
-          // FASE 3: RETORN SUAU I NÚMEROS
+          // FASE 3: RETORN SUAU I APARICIÓ DE NÚMEROS
           if (!slotAssigned) {
             assignFinalSlots();
             slotAssigned = true;
@@ -335,7 +350,15 @@
             b.y = b.startY + (b.targetSlot.y - b.startY) * eased;
           });
 
+          // Revelació seqüencial dels números 1..15 amb so pop
           const numRevealProgress = Math.min(NUM_BALLS, Math.floor(((elapsed - 18.1) / 1.4) * NUM_BALLS));
+          if (numRevealProgress > lastRevealedNumIndex && numRevealProgress > 0) {
+            for (let k = lastRevealedNumIndex + 1; k <= numRevealProgress; k++) {
+              recordSound('pop', k);
+            }
+            lastRevealedNumIndex = numRevealProgress;
+          }
+
           ctx.save();
           ctx.fillStyle = '#ffffff';
           ctx.font = '700 32px sans-serif';
@@ -348,7 +371,7 @@
           ctx.restore();
 
         } else {
-          // FASE 4: REVELACIÓ
+          // FASE 4: REVELACIÓ GUANYADORA
           ctx.save();
           ctx.fillStyle = '#ffffff';
           ctx.font = '700 32px sans-serif';
@@ -399,7 +422,7 @@
             ctx.restore();
           }
 
-          if (elapsed > 21.5 && mediaRecorder && mediaRecorder.state !== 'inactive' && !isFinished) {
+          if (elapsed > 21.6 && mediaRecorder && mediaRecorder.state !== 'inactive' && !isFinished) {
             isFinished = true;
             window.actualDuration = elapsed;
             mediaRecorder.stop();
