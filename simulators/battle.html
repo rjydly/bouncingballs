@@ -35,7 +35,7 @@
     const CENTER = { x: WIDTH / 2, y: HEIGHT / 2 };
     const ARENA_RADIUS = 465;
 
-    // LÍMITS DE DURADA (28s a 75s = < 1.5 minuts garantit)
+    // LÍMITS DE DURADA GARANTITS (28s a 75s = < 1.5 minuts)
     const MIN_DURATION = 28;
     const MAX_DURATION = 75;
 
@@ -58,7 +58,7 @@
         window.soundEvents.push({
           time: timeSec,
           note: noteIndex,
-          isEscape: isEscape // isEscape = true activa el so mem d'assets/audio/
+          isEscape: isEscape // isEscape = true reprodueix el so mem d'assets/audio/
         });
       }
     }
@@ -79,11 +79,11 @@
     ];
 
     // ==========================================
-    // 2. FÍSICA RÀPIDA I GENERACIÓ DE CANDIDATS
+    // 2. FÍSICA ESCALABLE (INICI CALMAT -> CLÍMAX RÀPID)
     // ==========================================
-    const GRAVITY = 0.52;
-    const BOUNCE_ACCEL = 1.006;
-    const MAX_SPEED = 42;
+    const GRAVITY = 0.40;                   // Gravetat suau per permetre trajectòries amples
+    const INDIVIDUAL_BOUNCE_ACCEL = 1.025;  // +2.5% de velocitat addicional a cada rebot de paret
+    const MAX_SPEED = 45;                   // Velocitat màxima en el duel final
     const BALL_RADIUS = 20;
 
     function distPointToSegment(px, py, x1, y1, x2, y2) {
@@ -113,10 +113,11 @@
         const bx = CENTER.x + Math.cos(midAngle) * spawnDist;
         const by = CENTER.y + Math.sin(midAngle) * spawnDist;
 
-        const moveAngle = midAngle + Math.PI + (Math.random() - 0.5) * 1.3;
-        const spd = 28 + Math.random() * 6;
+        // VELOCITAT INICIAL CALMADA (13 a 16 px/fotograma)
+        const moveAngle = midAngle + Math.PI + (Math.random() - 0.5) * 1.2;
+        const initialSpeed = 13.5 + Math.random() * 2.5;
 
-        // Totes les cordes inicials distribuïdes al perímetre
+        // Cordes inicials connectades al perímetre
         const lines = [];
         for (let a = 0; a < anchorsPerBall; a++) {
           const anchorIdx = i * anchorsPerBall + a;
@@ -134,8 +135,8 @@
           glowColor: col.glow,
           x: bx,
           y: by,
-          vx: Math.cos(moveAngle) * spd,
-          vy: Math.sin(moveAngle) * spd,
+          vx: Math.cos(moveAngle) * initialSpeed,
+          vy: Math.sin(moveAngle) * initialSpeed,
           radius: BALL_RADIUS,
           lines: lines,
           alive: true,
@@ -147,7 +148,7 @@
     }
 
     // ==========================================
-    // 3. PRE-SIMULACIÓ (FILTRE ESTRICTE DE TEMPS)
+    // 3. PRE-SIMULACIÓ (FILTRE ESTRICTE 28s - 75s)
     // ==========================================
     function simulateBattle(setup, maxAllowedSec) {
       const testBalls = setup.balls.map(b => ({
@@ -178,25 +179,26 @@
             ball.x += ball.vx / SUB_STEPS;
             ball.y += ball.vy / SUB_STEPS;
 
-            const curSpeed = Math.hypot(ball.vx, ball.vy);
-            if (curSpeed > MAX_SPEED) {
-              ball.vx = (ball.vx / curSpeed) * MAX_SPEED;
-              ball.vy = (ball.vy / curSpeed) * MAX_SPEED;
-            }
-
             const dx = ball.x - CENTER.x;
             const dy = ball.y - CENTER.y;
             const dist = Math.hypot(dx, dy);
 
-            // Rebot i creació de nova línia
+            // Rebot de paret: accelera individualment aquesta bola
             if (dist >= ARENA_RADIUS - ball.radius) {
               const nx = dx / (dist || 1);
               const ny = dy / (dist || 1);
               const dot = ball.vx * nx + ball.vy * ny;
 
               if (dot > 0) {
-                ball.vx = (ball.vx - 2 * dot * nx) * BOUNCE_ACCEL;
-                ball.vy = (ball.vy - 2 * dot * ny) * BOUNCE_ACCEL;
+                ball.vx = (ball.vx - 2 * dot * nx) * INDIVIDUAL_BOUNCE_ACCEL;
+                ball.vy = (ball.vy - 2 * dot * ny) * INDIVIDUAL_BOUNCE_ACCEL;
+
+                const curSpeed = Math.hypot(ball.vx, ball.vy);
+                if (curSpeed > MAX_SPEED) {
+                  ball.vx = (ball.vx / curSpeed) * MAX_SPEED;
+                  ball.vy = (ball.vy / curSpeed) * MAX_SPEED;
+                }
+
                 ball.x = CENTER.x + nx * (ARENA_RADIUS - ball.radius);
                 ball.y = CENTER.y + ny * (ARENA_RADIUS - ball.radius);
 
@@ -311,24 +313,26 @@
           ball.x += ball.vx / SUB_STEPS;
           ball.y += ball.vy / SUB_STEPS;
 
-          const currentSpeed = Math.hypot(ball.vx, ball.vy);
-          if (currentSpeed > MAX_SPEED) {
-            ball.vx = (ball.vx / currentSpeed) * MAX_SPEED;
-            ball.vy = (ball.vy / currentSpeed) * MAX_SPEED;
-          }
-
           const dx = ball.x - CENTER.x;
           const dy = ball.y - CENTER.y;
           const dist = Math.hypot(dx, dy);
 
+          // Rebot de paret: acceleració individual de la bola
           if (dist >= ARENA_RADIUS - ball.radius) {
             const nx = dx / (dist || 1);
             const ny = dy / (dist || 1);
             const dot = ball.vx * nx + ball.vy * ny;
 
             if (dot > 0) {
-              ball.vx = (ball.vx - 2 * dot * nx) * BOUNCE_ACCEL;
-              ball.vy = (ball.vy - 2 * dot * ny) * BOUNCE_ACCEL;
+              ball.vx = (ball.vx - 2 * dot * nx) * INDIVIDUAL_BOUNCE_ACCEL;
+              ball.vy = (ball.vy - 2 * dot * ny) * INDIVIDUAL_BOUNCE_ACCEL;
+
+              const curSpeed = Math.hypot(ball.vx, ball.vy);
+              if (curSpeed > MAX_SPEED) {
+                ball.vx = (ball.vx / curSpeed) * MAX_SPEED;
+                ball.vy = (ball.vy / curSpeed) * MAX_SPEED;
+              }
+
               ball.x = CENTER.x + nx * (ARENA_RADIUS - ball.radius);
               ball.y = CENTER.y + ny * (ARENA_RADIUS - ball.radius);
 
@@ -387,7 +391,7 @@
                   cutSparks.push({ x: cutter.x, y: cutter.y, life: 10, color: target.color });
                 }
 
-                // Si es queda sense línies -> MORT
+                // Eliminació en quedar-se sense cordes
                 if (target.lines.length === 0) {
                   target.alive = false;
                   spawnDeathBurst(target.x, target.y, target.color);
@@ -426,13 +430,13 @@
     }
 
     // ==========================================
-    // 5. RENDERITZAT ULTRARÀPID (SENSE LAG)
+    // 5. RENDERITZAT ULTRARÀPID
     // ==========================================
     function render() {
       ctx.fillStyle = '#030712';
       ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
-      // 1. DIBUIX DE CORDES OPTIMITZAT (Un sol stroke per bola, sense shadowBlur pesat)
+      // 1. DIBUIX DE CORDES OPTIMITZAT (Un sol stroke per bola)
       balls.forEach(ball => {
         if (!ball.alive || ball.lines.length === 0) return;
 
@@ -482,7 +486,6 @@
       balls.forEach(ball => {
         if (!ball.alive) return;
 
-        // Estela ràpida
         for (let i = 0; i < ball.trail.length; i++) {
           const pt = ball.trail[i];
           const alpha = (i + 1) / ball.trail.length;
@@ -494,7 +497,6 @@
         }
         ctx.globalAlpha = 1.0;
 
-        // Bola amb brillantor
         ctx.save();
         ctx.shadowBlur = 20;
         ctx.shadowColor = ball.glowColor;
@@ -534,7 +536,6 @@
         ctx.shadowColor = 'rgba(255, 255, 255, 0.6)';
         ctx.fillText('LAST ONE STANDING! ⚔️', CENTER.x, 230);
 
-        // Comptador de línies de cadascuna
         ctx.font = '700 30px sans-serif';
         const spacingX = Math.min(130, (WIDTH - 120) / balls.length);
         const startX = CENTER.x - ((balls.length - 1) * spacingX) / 2;
@@ -564,7 +565,7 @@
     }
 
     // ==========================================
-    // 6. GRAVADOR SINCRONITZAT
+    // 6. GRAVADOR SINCRONITZAT AL SEGON 0
     // ==========================================
     let mediaRecorder;
     let recordedChunks = [];
