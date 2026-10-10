@@ -104,30 +104,30 @@ def run():
         page = context.new_page()
 
         sim_url = f"http://localhost:{PORT}/simulator.html"
-        print("Carregant simulador amb durada dinàmica (fins que escapin)...")
+        print("Carregant simulador...")
         page.goto(sim_url, wait_until="load")
-        page.wait_for_timeout(1500)
+        page.wait_for_timeout(1000)
 
         raw_video = "raw_simulation.webm"
 
-        # Espera reactiva: s'espera fins que l'HTML acabi la partida i descarregui el vídeo
+        # Comença exactament quan arrenca el gravador
         with page.expect_download(timeout=90000) as download_info:
-            print("Simulació en marxa. Esperant el desenllaç...")
+            print("Iniciant simulació i gravació sincronitzades al segon 0...")
             page.evaluate("window.startRecording()")
 
         sound_events = page.evaluate("window.soundEvents || []")
-        actual_duration = page.evaluate("window.actualDuration || 20")
+        actual_duration = page.evaluate("window.actualDuration || 15")
 
         download = download_info.value
         download.save_as(raw_video)
-        print(f"Partida finalitzada en {actual_duration:.1f} segons!")
+        print(f"Partida finalitzada en {actual_duration:.1f} segons reals!")
         browser.close()
 
-    # Generar àudio amb la durada real de la partida
+    # Generar àudio amb la durada exacta
     audio_file = "simulation_audio.wav"
     synthesize_soundtrack(sound_events, actual_duration, audio_file)
 
-    # Fusionar vídeo i àudio
+    # Empaquetar MP4
     final_mp4 = "bouncelab_video.mp4"
     print("Empaquetant MP4 final amb FFmpeg...")
     subprocess.run(
@@ -170,7 +170,7 @@ def run():
                 url,
                 data={
                     "chat_id": TELEGRAM_CHAT_ID,
-                    "caption": f"🎬 Vídeo finalitzat!\n⏱️ Durada real: {actual_duration:.1f}s (fins a l'escapada)\nCanal: @bouncelab.tv 🔥",
+                    "caption": f"🎬 Vídeo finalitzat!\n⏱️ Durada real: {actual_duration:.1f}s (duel complet)\nCanal: @bouncelab.tv 🔥",
                     "supports_streaming": True,
                 },
                 files={"video": f},
