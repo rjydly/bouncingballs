@@ -162,20 +162,27 @@ def synthesize_soundtrack(
     total_samples = int((duration_sec + 1.5) * SAMPLE_RATE)
     audio_data = np.zeros(total_samples, dtype=np.float32)
 
+    # Inserció de veu inicial
     tts_start_sample = int(0.15 * SAMPLE_RATE)
+    tts_end_sample = 0
     if tts_audio is not None and len(tts_audio) > 0:
         n_tts = min(len(tts_audio), total_samples - tts_start_sample)
+        tts_end_sample = tts_start_sample + n_tts + int(0.20 * SAMPLE_RATE)
         audio_data[tts_start_sample : tts_start_sample + n_tts] += (
             tts_audio[:n_tts] * 2.2
         )
 
     for ev in sound_events:
         t_sec = ev.get("time", 0)
+        ev_type = ev.get("type", "tick")
         is_reveal = ev.get("isEscape", False)
 
         start_sample = int(t_sec * SAMPLE_RATE)
         if start_sample >= total_samples:
             continue
+
+        is_during_tts = tts_start_sample <= start_sample <= tts_end_sample
+        duck = 0.3 if is_during_tts else 1.0
 
         if is_reveal and meme_audio is not None:
             n_samples = min(len(meme_audio), total_samples - start_sample)
@@ -183,6 +190,7 @@ def synthesize_soundtrack(
                 meme_audio[:n_samples] * 0.95
             )
         elif is_reveal:
+            # Acord brillant de celebració per defecte
             note_len = 1.2
             n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
             t = np.linspace(0, note_len, n_samples, False)
@@ -193,15 +201,23 @@ def synthesize_soundtrack(
                 + 0.4 * np.sin(2 * np.pi * 1046.50 * t)
             ) * np.exp(-3.5 * t)
             audio_data[start_sample : start_sample + n_samples] += chord
+        elif ev_type == "pop":
+            # Clic agut i curt per a cada número del 1 al 15 que apareix
+            note_len = 0.04
+            n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
+            t = np.linspace(0, note_len, n_samples, False)
+            pop = np.sin(2 * np.pi * 1800 * t) * np.exp(-90 * t)
+            audio_data[start_sample : start_sample + n_samples] += pop * 0.40
         else:
+            # Tic rítmic de compte enrere
             note_len = 0.05
             n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
             t = np.linspace(0, note_len, n_samples, False)
             click = (
-                np.sin(2 * np.pi * 1200 * t) * 0.5
-                + np.sin(2 * np.pi * 600 * t) * 0.3
-            ) * np.exp(-70 * t)
-            audio_data[start_sample : start_sample + n_samples] += click * 0.45
+                np.sin(2 * np.pi * 1100 * t) * 0.5
+                + np.sin(2 * np.pi * 550 * t) * 0.3
+            ) * np.exp(-65 * t)
+            audio_data[start_sample : start_sample + n_samples] += click * 0.35 * duck
 
     max_amp = np.max(np.abs(audio_data))
     if max_amp > 0:
@@ -235,8 +251,7 @@ def resolve_simulation_url():
 
     all_files = os.listdir(BASE_DIR)
     raise FileNotFoundError(
-        f"❌ No s'ha trobat {SELECTED_MODE}.html ni cap fitxer alternatiu a {BASE_DIR}. "
-        f"Fitxers existents: {all_files}"
+        f"❌ No s'ha trobat {SELECTED_MODE}.html a {BASE_DIR}. Fitxers: {all_files}"
     )
 
 
@@ -268,96 +283,3 @@ def run():
         is_ready = page.evaluate("typeof window.startRecording === 'function'")
         if not is_ready:
             raise RuntimeError("window.startRecording no està definida al fitxer HTML!")
-
-        raw_video = "raw_simulation.webm"
-
-        with page.expect_download(timeout=120000) as download_info:
-            print("Enregistrant repte visual (~21.5s)...")
-            page.evaluate("window.startRecording()")
-
-        sound_events = page.evaluate("window.soundEvents || []")
-        actual_duration = page.evaluate("window.actualDuration || 21.5")
-        winner_number = page.evaluate("window.winnerName || '?'")
-
-        download = download_info.value
-        download.save_as(raw_video)
-        print(f"Repte completat! Número guanyador: #{winner_number} ({actual_duration:.1f}s).")
-        browser.close()
-
-    audio_file = "simulation_audio.wav"
-    synthesize_soundtrack(
-        sound_events, actual_duration, meme_audio, tts_audio, audio_file
-    )
-
-    final_mp4 = "bouncelab_video.mp4"
-    print("Empaquetant MP4 a 30 FPS...")
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-y",
-            "-i",
-            raw_video,
-            "-i",
-            audio_file,
-            "-c:v",
-            "libx264",
-            "-preset",
-            "fast",
-            "-r",
-            "30",
-            "-vsync",
-            "cfr",
-            "-pix_fmt",
-            "yuv420p",
-            "-crf",
-            "26",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "128k",
-            "-shortest",
-            final_mp4,
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-
-    file_size_mb = os.path.getsize(final_mp4) / (1024 * 1024)
-    print(f"📦 Mida final del vídeo: {file_size_mb:.2f} MB")
-
-    for tmp in [raw_video, audio_file]:
-        if os.path.exists(tmp):
-            os.remove(tmp)
-
-    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID and os.path.exists(final_mp4):
-        print("Enviant el vídeo per Telegram...")
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVideo"
-        caption_text = (
-            f"🎯 [DON'T LOSE THE RED BALL]\n"
-            f"🎙️ Hook: \"{tts_phrase}\"\n"
-            f"👀 Has aconseguit no perdre-la?\n"
-            f"🏆 Resposta correcta: Bola #{winner_number}!\n"
-            f"⏱️ Durada: {actual_duration:.1f}s\n"
-            f"📦 Pes: {file_size_mb:.1f} MB\n"
-            f"Canal: @bouncelab.tv 🚀"
-        )
-
-        with open(final_mp4, "rb") as f:
-            res = requests.post(
-                url,
-                data={
-                    "chat_id": TELEGRAM_CHAT_ID,
-                    "caption": caption_text,
-                    "supports_streaming": True,
-                },
-                files={"video": f},
-                timeout=240,
-            )
-            if res.status_code == 200:
-                print("🎉 VÍDEO ENVIAT AMB ÈXIT A TELEGRAM!")
-            else:
-                print(f"Error Telegram: {res.text}")
-
-
-if __name__ == "__main__":
-    run()
