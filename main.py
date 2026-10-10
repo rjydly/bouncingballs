@@ -31,7 +31,7 @@ for i in range(RINGS_COUNT):
     speed = random.choice([-1, 1]) * random.uniform(0.015, 0.035)
     gap_size = math.radians(45)
     gap_angle = random.uniform(0, 2 * math.pi)
-    hue = int((i / RINGS_COUNT) * 180)
+    hue = int((i / RINGS_COUNT) * 180)  # Rang HSV a OpenCV és 0-179
     rings.append(
         {
             "radius": r,
@@ -130,9 +130,9 @@ for frame_idx in range(TOTAL_FRAMES):
     for ring in rings:
         if not ring["alive"]:
             continue
-        color_bgr = cv2.applyColorMap(
-            np.uint8([[[ring["hue"], 255, 255]]]), cv2.COLOR_HSV2BGR
-        )[0][0]
+        # CORREGIT: cv2.cvtColor en lloc de cv2.applyColorMap
+        hsv_color = np.uint8([[[ring["hue"], 255, 255]]])
+        color_bgr = cv2.cvtColor(hsv_color, cv2.COLOR_HSV2BGR)[0][0]
         color = (int(color_bgr[0]), int(color_bgr[1]), int(color_bgr[2]))
 
         start_deg = math.degrees(ring["gap_angle"] + ring["gap_size"] / 2)
@@ -152,7 +152,7 @@ for frame_idx in range(TOTAL_FRAMES):
             cv2.LINE_AA,
         )
 
-    # Rastro
+    # Rastro de la pilota
     for i, pt in enumerate(trail):
         alpha = (i + 1) / len(trail)
         cv2.circle(
@@ -172,9 +172,9 @@ for frame_idx in range(TOTAL_FRAMES):
         if p[4] <= 0:
             particles.remove(p)
         else:
-            p_bgr = cv2.applyColorMap(
-                np.uint8([[[p[5], 255, 255]]]), cv2.COLOR_HSV2BGR
-            )[0][0]
+            # CORREGIT: cv2.cvtColor
+            hsv_part = np.uint8([[[p[5], 255, 255]]])
+            p_bgr = cv2.cvtColor(hsv_part, cv2.COLOR_HSV2BGR)[0][0]
             cv2.circle(
                 frame,
                 (int(p[0]), int(p[1])),
@@ -183,7 +183,19 @@ for frame_idx in range(TOTAL_FRAMES):
                 -1,
             )
 
-    # Ganxo de text
+    # Marca d'aigua discreta al centre
+    cv2.putText(
+        frame,
+        "bouncelab.tv",
+        (CENTER[0] - 110, CENTER[1] + 15),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.8,
+        (100, 100, 100),
+        1,
+        cv2.LINE_AA,
+    )
+
+    # Ganxo de text viral superior
     cv2.putText(
         frame,
         "WILL IT ESCAPE?",
@@ -194,6 +206,7 @@ for frame_idx in range(TOTAL_FRAMES):
         3,
         cv2.LINE_AA,
     )
+
     video_out.write(frame)
 
     if not any(r["alive"] for r in rings) and (
@@ -283,7 +296,7 @@ if bot_token and chat_id:
         files = {"video": video_file}
         data = {
             "chat_id": chat_id,
-            "caption": "🎬 Nou vídeo de simulació generat! Mode: Clàssic 🔥",
+            "caption": "🎬 Nou vídeo de simulació generat!\nMode: Clàssic 🔥\nCanal: @bouncelab.tv",
             "supports_streaming": True,
         }
         res = requests.post(url, data=data, files=files)
