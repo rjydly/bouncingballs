@@ -17,11 +17,11 @@ import requests
 # ==============================================================================
 MODE_PROVA = True
 
-# Tria el mode que vols provar: "battle" o "classic"
+# Mode a provar
 SELECTED_MODE = "battle"
 # ==============================================================================
 
-# Llista de 15 frases simples, curtes i directes per a la veu en off
+# Llista de 15 frases simples i directes
 HOOK_PHRASES = [
     "Which ball will last longer?",
     "Which color will win?",
@@ -55,17 +55,17 @@ def start_local_server():
     print(f"Servidor web local actiu a http://localhost:{PORT}")
 
 
-# Generador de veu en off amb Edge-TTS
+# Generador de veu en off amb volum màxim garantit
 async def _async_generate_voice(text, output_mp3):
     communicate = edge_tts.Communicate(
-        text, voice="en-US-ChristopherNeural", rate="+10%"
+        text, voice="en-US-ChristopherNeural", rate="+8%", volume="+25%"
     )
     await communicate.save(output_mp3)
 
 
 def generate_tts_intro():
     chosen_phrase = random.choice(HOOK_PHRASES)
-    print(f"🎙️ Generant veu Edge-TTS: \"{chosen_phrase}\"")
+    print(f"🎙️ Generant veu Edge-TTS a màxim volum: \"{chosen_phrase}\"")
 
     temp_mp3 = "temp_tts.mp3"
     temp_wav = "temp_tts.wav"
@@ -96,6 +96,12 @@ def generate_tts_intro():
             tts_audio = (
                 np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
             )
+
+        # Normalització de la veu al 100% de potència
+        max_v = np.max(np.abs(tts_audio))
+        if max_v > 0:
+            tts_audio = tts_audio / max_v
+
         os.remove(temp_wav)
 
     if os.path.exists(temp_mp3):
@@ -180,13 +186,18 @@ def synthesize_soundtrack(
         1046.50,
     ]
 
-    # 1. Veu Edge-TTS a l'inici
-    if tts_audio is not None:
-        start_tts = int(0.25 * SAMPLE_RATE)
-        n_tts = min(len(tts_audio), total_samples - start_tts)
-        audio_data[start_tts : start_tts + n_tts] += tts_audio[:n_tts] * 1.25
+    # 1. Finestra de la veu (per fer DUCKING i abaixar la marimba mentre parla)
+    tts_start_sample = int(0.20 * SAMPLE_RATE)
+    tts_end_sample = 0
 
-    # 2. Xocs i mems a la mort
+    if tts_audio is not None and len(tts_audio) > 0:
+        n_tts = min(len(tts_audio), total_samples - tts_start_sample)
+        tts_end_sample = tts_start_sample + n_tts + int(0.3 * SAMPLE_RATE)
+        audio_data[tts_start_sample : tts_start_sample + n_tts] += (
+            tts_audio[:n_tts] * 2.2
+        )
+
+    # 2. Inserir notes i mems
     for ev in sound_events:
         t_sec = ev.get("time", 0)
         note_idx = ev.get("note", 0)
@@ -195,6 +206,10 @@ def synthesize_soundtrack(
         start_sample = int(t_sec * SAMPLE_RATE)
         if start_sample >= total_samples:
             continue
+
+        # Si el so coincideix amb la veu, s'atenua un 75% perquè la veu ressoni al màxim
+        is_during_tts = tts_start_sample <= start_sample <= tts_end_sample
+        duck_factor = 0.25 if is_during_tts else 1.0
 
         if is_escape and meme_audio is not None:
             n_samples = min(len(meme_audio), total_samples - start_sample)
@@ -222,14 +237,14 @@ def synthesize_soundtrack(
                 + 0.15 * np.sin(2 * np.pi * (freq * 3) * t)
             )
             audio_data[start_sample : start_sample + n_samples] += (
-                wave_tone * envelope
+                wave_tone * envelope * duck_factor
             )
 
     max_amp = np.max(np.abs(audio_data))
     if max_amp > 0:
-        audio_int16 = (audio_data / max_amp * 30000).astype(np.int16)
+        audio_int16 = (audio_data / max_amp * 31000).astype(np.int16)
     else:
-        audio_int16 = (audio_data * 30000).astype(np.int16)
+        audio_int16 = (audio_data * 31000).astype(np.int16)
 
     with wave.open(output_wav, "w") as wf:
         wf.setnchannels(1)
@@ -238,7 +253,7 @@ def synthesize_soundtrack(
         wf.writeframes(audio_int16.tobytes())
 
     print(
-        f"🎵 Àudio sintetitzat ({len(sound_events)} impactes + veu TTS, {duration_sec:.1f}s)."
+        f"🎵 Àudio sintetitzat ({len(sound_events)} impactes + veu forta, {duration_sec:.1f}s)."
     )
 
 
@@ -278,11 +293,11 @@ def run():
         raw_video = "raw_simulation.webm"
 
         with page.expect_download(timeout=120000) as download_info:
-            print("Iniciant enregistrament de la batalla...")
+            print("Iniciant enregistrament de la batalla (garantida > 22s)...")
             page.evaluate("window.startRecording()")
 
         sound_events = page.evaluate("window.soundEvents || []")
-        actual_duration = page.evaluate("window.actualDuration || 20")
+        actual_duration = page.evaluate("window.actualDuration || 25")
         winner_name = page.evaluate("window.winnerName || 'DESCONEGUT'")
 
         download = download_info.value
