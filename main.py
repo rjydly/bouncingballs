@@ -15,29 +15,18 @@ import requests
 # ==============================================================================
 # ⚙️ PANELL DE CONTROL PRINCIPAL
 # ==============================================================================
-MODE_PROVA = True
-
-# Mode a provar
-SELECTED_MODE = "battle"
+SELECTED_MODE = "tracker"  # Nou mode "Don't lose the red ball"
 # ==============================================================================
 
-# Llista de 15 frases simples i directes
 HOOK_PHRASES = [
-    "Which ball will last longer?",
-    "Which color will win?",
-    "Which ball will survive?",
-    "Who will be the last one standing?",
-    "Pick a color right now!",
-    "Guess which ball wins!",
-    "Which color is going to lose first?",
-    "Which ball will be eliminated first?",
-    "Can you guess the winner?",
-    "Which color will make it to the end?",
-    "Pick your ball before it starts!",
-    "Which one is going to survive?",
-    "Who is winning this battle?",
-    "Which color are you betting on?",
-    "Who is going to lose?",
+    "Don't lose the red ball!",
+    "Can you track the red ball?",
+    "Keep your eyes on the red ball!",
+    "Follow the red ball and guess the number!",
+    "Don't blink or you'll lose the red ball!",
+    "Test your focus! Track the red ball!",
+    "Which number will the red ball be?",
+    "Follow the red ball to the end!",
 ]
 
 PORT = 8080
@@ -55,17 +44,16 @@ def start_local_server():
     print(f"Servidor web local actiu a http://localhost:{PORT}")
 
 
-# Generador de veu en off amb volum màxim
 async def _async_generate_voice(text, output_mp3):
     communicate = edge_tts.Communicate(
-        text, voice="en-US-ChristopherNeural", rate="+8%", volume="+30%"
+        text, voice="en-US-ChristopherNeural", rate="+10%", volume="+35%"
     )
     await communicate.save(output_mp3)
 
 
 def generate_tts_intro():
     chosen_phrase = random.choice(HOOK_PHRASES)
-    print(f"🎙️ Generant veu Edge-TTS a màxim volum: \"{chosen_phrase}\"")
+    print(f"🎙️ Generant veu Edge-TTS: \"{chosen_phrase}\"")
 
     temp_mp3 = "temp_tts.mp3"
     temp_wav = "temp_tts.wav"
@@ -97,7 +85,6 @@ def generate_tts_intro():
                 np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
             )
 
-        # Normalització prèvia de la veu al 100%
         max_v = np.max(np.abs(tts_audio))
         if max_v > 0:
             tts_audio = tts_audio / max_v
@@ -121,12 +108,10 @@ def load_random_meme_sound():
     ]
 
     if not audio_files:
-        print("ℹ️ Carpeta assets/audio buida: s'usarà el so per defecte.")
         return None, None
 
     chosen_filename = random.choice(audio_files)
     chosen_path = os.path.join(ASSETS_AUDIO_DIR, chosen_filename)
-    print(f"🎲 Mem triat per a cada mort en aquest vídeo: {chosen_filename}")
 
     temp_wav = "temp_meme.wav"
     subprocess.run(
@@ -169,76 +154,57 @@ def synthesize_soundtrack(
     output_wav="audio.wav",
 ):
     SAMPLE_RATE = 44100
-    total_samples = int((duration_sec + 1) * SAMPLE_RATE)
+    total_samples = int((duration_sec + 1.5) * SAMPLE_RATE)
     audio_data = np.zeros(total_samples, dtype=np.float32)
 
-    FREQUENCIES = [
-        261.63,
-        293.66,
-        329.63,
-        392.00,
-        440.00,
-        523.25,
-        587.33,
-        659.25,
-        783.99,
-        880.00,
-        1046.50,
-    ]
-
-    # Finestra temporal de la veu (Ducking)
-    tts_start_sample = int(0.20 * SAMPLE_RATE)
+    # Finestra temporal de veu inicial
+    tts_start_sample = int(0.15 * SAMPLE_RATE)
     tts_end_sample = 0
 
     if tts_audio is not None and len(tts_audio) > 0:
         n_tts = min(len(tts_audio), total_samples - tts_start_sample)
-        tts_end_sample = tts_start_sample + n_tts + int(0.35 * SAMPLE_RATE)
+        tts_end_sample = tts_start_sample + n_tts + int(0.25 * SAMPLE_RATE)
         audio_data[tts_start_sample : tts_start_sample + n_tts] += (
-            tts_audio[:n_tts] * 2.5
+            tts_audio[:n_tts] * 2.2
         )
 
-    # Inserció de notes i mems
+    # Inserció dels tics de compte enrere i el so de revelació
     for ev in sound_events:
         t_sec = ev.get("time", 0)
-        note_idx = ev.get("note", 0)
-        is_escape = ev.get("isEscape", False)
+        ev_type = ev.get("type", "tick")
+        is_reveal = ev.get("isEscape", False)
 
         start_sample = int(t_sec * SAMPLE_RATE)
         if start_sample >= total_samples:
             continue
 
-        # Ducking: s'atenua un 75% mentre la veu parla
-        is_during_tts = tts_start_sample <= start_sample <= tts_end_sample
-        duck_factor = 0.25 if is_during_tts else 1.0
-
-        if is_escape and meme_audio is not None:
+        if is_reveal and meme_audio is not None:
             n_samples = min(len(meme_audio), total_samples - start_sample)
             audio_data[start_sample : start_sample + n_samples] += (
                 meme_audio[:n_samples] * 0.95
             )
-        else:
-            freq = (
-                1174.66
-                if is_escape
-                else FREQUENCIES[note_idx % len(FREQUENCIES)]
-            )
-            note_len = 0.45 if is_escape else 0.16
-            n_samples = min(
-                int(note_len * SAMPLE_RATE), total_samples - start_sample
-            )
+        elif is_reveal:
+            # Acord brillant de campana/revelació per defecte
+            note_len = 1.2
+            n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
             t = np.linspace(0, note_len, n_samples, False)
-
-            decay_rate = 14 if is_escape else 22
-            envelope = np.exp(-decay_rate * t)
-
-            wave_tone = (
-                0.60 * np.sin(2 * np.pi * freq * t)
-                + 0.25 * np.sin(2 * np.pi * (freq * 2) * t)
-                + 0.15 * np.sin(2 * np.pi * (freq * 3) * t)
-            )
-            audio_data[start_sample : start_sample + n_samples] += (
-                wave_tone * envelope * duck_factor
-            )
+            chord = (
+                0.5 * np.sin(2 * np.pi * 523.25 * t)  # C5
+                + 0.4 * np.sin(2 * np.pi * 659.25 * t)  # E5
+                + 0.5 * np.sin(2 * np.pi * 783.99 * t)  # G5
+                + 0.4 * np.sin(2 * np.pi * 1046.50 * t) # C6
+            ) * np.exp(-3.5 * t)
+            audio_data[start_sample : start_sample + n_samples] += chord
+        else:
+            # Tic de metrònom/fusta sec a cada segon
+            note_len = 0.05
+            n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
+            t = np.linspace(0, note_len, n_samples, False)
+            click = (
+                np.sin(2 * np.pi * 1200 * t) * 0.5
+                + np.sin(2 * np.pi * 600 * t) * 0.3
+            ) * np.exp(-70 * t)
+            audio_data[start_sample : start_sample + n_samples] += click * 0.45
 
     max_amp = np.max(np.abs(audio_data))
     if max_amp > 0:
@@ -252,9 +218,7 @@ def synthesize_soundtrack(
         wf.setframerate(SAMPLE_RATE)
         wf.writeframes(audio_int16.tobytes())
 
-    print(
-        f"🎵 Àudio sintetitzat ({len(sound_events)} impactes + veu forta, {duration_sec:.1f}s)."
-    )
+    print(f"🎵 Àudio generat amb èxit ({duration_sec:.1f}s).")
 
 
 def run():
@@ -263,14 +227,7 @@ def run():
     tts_audio, tts_phrase = generate_tts_intro()
 
     active_mode = SELECTED_MODE
-    print(f"🧪 [MODE PROVA: {active_mode.upper()}]")
-
-    if os.path.exists(os.path.join("simulators", f"{active_mode}.html")):
-        sim_url = f"http://localhost:{PORT}/simulators/{active_mode}.html"
-    elif os.path.exists(f"{active_mode}.html"):
-        sim_url = f"http://localhost:{PORT}/{active_mode}.html"
-    else:
-        sim_url = f"http://localhost:{PORT}/simulator.html"
+    sim_url = f"http://localhost:{PORT}/{active_mode}.html"
 
     with sync_playwright() as p:
         print("Iniciant Firefox en mode headless...")
@@ -287,26 +244,19 @@ def run():
         page.goto(sim_url, wait_until="load")
         page.wait_for_timeout(1000)
 
-        total_fighters = page.evaluate("window.ringCount || 5")
-        print(f"⚔️ Batalla iniciada amb {total_fighters} boles!")
-
         raw_video = "raw_simulation.webm"
 
         with page.expect_download(timeout=120000) as download_info:
-            print(
-                "Iniciant enregistrament de la batalla (garantida > 20s)..."
-            )
+            print("Enregistrant repte visual (~21s)...")
             page.evaluate("window.startRecording()")
 
         sound_events = page.evaluate("window.soundEvents || []")
-        actual_duration = page.evaluate("window.actualDuration || 25")
-        winner_name = page.evaluate("window.winnerName || 'DESCONEGUT'")
+        actual_duration = page.evaluate("window.actualDuration || 21.5")
+        winner_number = page.evaluate("window.winnerName || '?'")
 
         download = download_info.value
         download.save_as(raw_video)
-        print(
-            f"Batalla acabada! Guanyador: {winner_name} en {actual_duration:.1f}s."
-        )
+        print(f"Repte completat! Número guanyador: #{winner_number} ({actual_duration:.1f}s).")
         browser.close()
 
     audio_file = "simulation_audio.wav"
@@ -315,8 +265,7 @@ def run():
     )
 
     final_mp4 = "bouncelab_video.mp4"
-    print("Empaquetant MP4 a 30 FPS amb compressió CRF 26...")
-    # 30 FPS + CRF 26 = MÀXIMA QUALITAT AMB PES < 20 MB (NO MÉS ERROR 413)
+    print("Empaquetant MP4 a 30 FPS...")
     subprocess.run(
         [
             "ffmpeg",
@@ -349,7 +298,7 @@ def run():
     )
 
     file_size_mb = os.path.getsize(final_mp4) / (1024 * 1024)
-    print(f"📦 Mida final del vídeo: {file_size_mb:.2f} MB (límit Telegram: 50 MB)")
+    print(f"📦 Mida final del vídeo: {file_size_mb:.2f} MB")
 
     for tmp in [raw_video, audio_file]:
         if os.path.exists(tmp):
@@ -358,13 +307,12 @@ def run():
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID and os.path.exists(final_mp4):
         print("Enviant el vídeo per Telegram...")
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVideo"
-        meme_caption = f"\n🔊 So mem: {meme_name}" if meme_name else ""
         caption_text = (
-            f"⚔️ [STRING BATTLE ROYALE]\n"
+            f"🎯 [DON'T LOSE THE RED BALL]\n"
             f"🎙️ Hook: \"{tts_phrase}\"\n"
-            f"🔥 {total_fighters} boles enfrontades!\n"
-            f"🏆 Guanyador: {winner_name}!\n"
-            f"⏱️ Durada: {actual_duration:.1f}s{meme_caption}\n"
+            f"👀 Has aconseguit no perdre-la?\n"
+            f"🏆 Resposta correcta: Bola #{winner_number}!\n"
+            f"⏱️ Durada: {actual_duration:.1f}s\n"
             f"📦 Pes: {file_size_mb:.1f} MB\n"
             f"Canal: @bouncelab.tv 🚀"
         )
