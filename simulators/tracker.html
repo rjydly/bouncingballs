@@ -24,7 +24,6 @@
       aspect-ratio: 9 / 16;
       box-shadow: 0 0 50px rgba(0, 0, 0, 0.95);
     }
-    /* Elements invisibles per forçar la descàrrega immediata de tots els pesos de Lexend */
     .font-preload {
       position: absolute;
       left: -9999px;
@@ -37,7 +36,7 @@
   </style>
 </head>
 <body>
-  <!-- Precàrrega de fonts forçada -->
+  <!-- Precàrrega forçada de fonts -->
   <div class="font-preload w700">Preload Lexend 700</div>
   <div class="font-preload w800">Preload Lexend 800</div>
   <div class="font-preload w900">Preload Lexend 900</div>
@@ -55,7 +54,7 @@
 
     const ARENA_RADIUS = 425;      // Línia blanca exterior
     const NUMBER_RADIUS = 355;     // Anell dels números 1..15
-    const BALL_REST_RADIUS = 275;  // Anell interior on reposen les boles
+    const BALL_REST_RADIUS = 275;  // Anell interior de repòs de les boles
     const BALL_RADIUS = 22;
     const NUM_BALLS = 15;
 
@@ -274,7 +273,7 @@
       ctx.fillText(titleHighlight, startX + ctx.measureText(titlePrefix).width, 320);
       ctx.restore();
 
-      // Marca d'aigua inferior amb Lexend Bold (700)
+      // Marca d'aigua inferior
       ctx.font = '700 30px Lexend, sans-serif';
       ctx.fillStyle = 'rgba(255, 255, 255, 0.22)';
       ctx.textAlign = 'center';
@@ -298,7 +297,7 @@
             recordSound('tick', countdown);
           }
 
-          // Número gran al centre amb Lexend Black (900)
+          // Número gran al centre
           ctx.save();
           ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
           ctx.font = '900 240px Lexend, sans-serif';
@@ -307,7 +306,7 @@
           ctx.fillText(countdown.toString(), CENTER.x, CENTER.y);
           ctx.restore();
 
-          // Números 1..15 amb Lexend Bold (800)
+          // Números 1..15
           ctx.save();
           ctx.fillStyle = '#ffffff';
           ctx.font = '800 32px Lexend, sans-serif';
@@ -316,7 +315,7 @@
           slots.forEach(s => ctx.fillText(s.number.toString(), s.textX, s.textY));
           ctx.restore();
 
-          // TEXT "FOLLOW THE RED BALL" AMB LEXEND BOLD (800) FIXAT A BAIX
+          // TEXT "FOLLOW THE RED BALL" FIXAT A BAIX
           ctx.save();
           ctx.fillStyle = '#ffffff';
           ctx.font = '800 32px Lexend, sans-serif';
@@ -325,16 +324,17 @@
           ctx.fillText('FOLLOW THE RED BALL', CENTER.x, 1450);
           ctx.restore();
 
-          // Fletxa assenyalant la bola vermella
+          // FLETXA DES DE DINS APUNTANT ENFORA CAP A LA BOLA VERMELLA
           const targetBall = balls.find(b => b.isTarget);
           if (targetBall) {
             const dirX = Math.cos(slots[targetSlotIndex].angle);
             const dirY = Math.sin(slots[targetSlotIndex].angle);
 
-            const arrowStartX = targetBall.x + dirX * 65;
-            const arrowStartY = targetBall.y + dirY * 65;
-            const arrowEndX = targetBall.x + dirX * 28;
-            const arrowEndY = targetBall.y + dirY * 28;
+            // Comença a l'interior i apunta directament cap a la bola
+            const arrowStartX = targetBall.x - dirX * 58;
+            const arrowStartY = targetBall.y - dirY * 58;
+            const arrowEndX = targetBall.x - dirX * 28;
+            const arrowEndY = targetBall.y - dirY * 28;
 
             ctx.save();
             ctx.fillStyle = '#ffffff';
@@ -401,6 +401,7 @@
             b.y = b.startY + (b.targetSlot.y - b.startY) * eased;
           });
 
+          // Revelació seqüencial dels números 1..15 en sentit horari
           const numRevealProgress = Math.min(NUM_BALLS, Math.floor(((elapsed - 18.1) / 1.4) * NUM_BALLS));
           if (numRevealProgress > lastRevealedNumIndex && numRevealProgress > 0) {
             for (let k = lastRevealedNumIndex + 1; k <= numRevealProgress; k++) {
@@ -443,14 +444,15 @@
             recordSound('reveal', 10);
           }
 
+          // FLETXA DES DE DINS APUNTANT ENFORA CAP A LA BOLA GUANYADORA
           if (winningBall) {
             const dirX = Math.cos(winningBall.targetSlot.angle);
             const dirY = Math.sin(winningBall.targetSlot.angle);
 
-            const arrowStartX = winningBall.x + dirX * 65;
-            const arrowStartY = winningBall.y + dirY * 65;
-            const arrowEndX = winningBall.x + dirX * 28;
-            const arrowEndY = winningBall.y + dirY * 28;
+            const arrowStartX = winningBall.x - dirX * 58;
+            const arrowStartY = winningBall.y - dirY * 58;
+            const arrowEndX = winningBall.x - dirX * 28;
+            const arrowEndY = winningBall.y - dirY * 28;
 
             ctx.save();
             ctx.fillStyle = '#ffffff';
@@ -545,7 +547,7 @@
       }, 23000);
     };
 
-    // Assegurar que totes les fonts Lexend estan completament descarregades abans de dibuixar
+    // Assegurar descàrrega completa de fonts Lexend abans de dibuixar
     async function startApplication() {
       try {
         await Promise.all([
