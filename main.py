@@ -13,13 +13,10 @@ import requests
 # ==============================================================================
 # ⚙️ PANELL DE CONTROL PRINCIPAL
 # ==============================================================================
-# True  -> Mode de proves: s'executa el mode definit a SELECTED_MODE i s'envia a Telegram.
-# False -> Mode producció: [Per a més endavant] farà la roda de vídeos per ordre i publicarà a Buffer.
 MODE_PROVA = True
 
-# Quin tipus de vídeo vols provar ara mateix (nom del fitxer a la carpeta simulators/):
-# Exemples: "classic", "lines", "paint", "grow", "shatter"
-SELECTED_MODE = "lines"
+# Tria el mode que vols provar: "battle" o "classic"
+SELECTED_MODE = "battle"
 # ==============================================================================
 
 PORT = 8080
@@ -37,7 +34,6 @@ def start_local_server():
     print(f"Servidor web local actiu a http://localhost:{PORT}")
 
 
-# Carrega un mem aleatori d'assets/audio/ si n'hi ha cap
 def load_random_meme_sound():
     valid_exts = (".mp3", ".wav", ".ogg", ".m4a")
     if not os.path.exists(ASSETS_AUDIO_DIR):
@@ -49,12 +45,12 @@ def load_random_meme_sound():
     ]
 
     if not audio_files:
-        print("ℹ️ Carpeta assets/audio buida: s'usarà el so sintètic per defecte.")
+        print("ℹ️ Carpeta assets/audio buida: s'usarà el so per defecte.")
         return None, None
 
     chosen_filename = random.choice(audio_files)
     chosen_path = os.path.join(ASSETS_AUDIO_DIR, chosen_filename)
-    print(f"🎲 Mem triat per a aquest vídeo: {chosen_filename}")
+    print(f"🎲 Mem triat per a cada mort en aquest vídeo: {chosen_filename}")
 
     temp_wav = "temp_meme.wav"
     subprocess.run(
@@ -117,6 +113,7 @@ def synthesize_soundtrack(
         if start_sample >= total_samples:
             continue
 
+        # A CADA MORT D'UNA BOLA: SONA EL MEM!
         if is_escape and meme_audio is not None:
             n_samples = min(len(meme_audio), total_samples - start_sample)
             audio_data[start_sample : start_sample + n_samples] += (
@@ -128,13 +125,13 @@ def synthesize_soundtrack(
                 if is_escape
                 else FREQUENCIES[note_idx % len(FREQUENCIES)]
             )
-            note_len = 0.45 if is_escape else 0.18
+            note_len = 0.45 if is_escape else 0.16
             n_samples = min(
                 int(note_len * SAMPLE_RATE), total_samples - start_sample
             )
             t = np.linspace(0, note_len, n_samples, False)
 
-            decay_rate = 12 if is_escape else 20
+            decay_rate = 14 if is_escape else 22
             envelope = np.exp(-decay_rate * t)
 
             wave_tone = (
@@ -165,25 +162,17 @@ def synthesize_soundtrack(
 
 def run():
     start_local_server()
+    meme_audio, meme_name = load_random_meme_sound()
 
-    # Gestió de modes segons si estem en mode prova o producció
-    if MODE_PROVA:
-        active_mode = SELECTED_MODE
-        print(f"🧪 [MODE PROVA ACTIVAT] Generant mode '{active_mode}'...")
-    else:
-        # En el futur, aquí gestionarem la rotació automàtica
-        active_mode = SELECTED_MODE
-        print(f"🚀 [MODE PRODUCCIÓ ACTIVAT] Generant mode '{active_mode}'...")
+    active_mode = SELECTED_MODE
+    print(f"🧪 [MODE PROVA: {active_mode.upper()}]")
 
-    # Comprova la ruta del fitxer HTML (simulators/{mode}.html o fallback {mode}.html)
     if os.path.exists(os.path.join("simulators", f"{active_mode}.html")):
         sim_url = f"http://localhost:{PORT}/simulators/{active_mode}.html"
     elif os.path.exists(f"{active_mode}.html"):
         sim_url = f"http://localhost:{PORT}/{active_mode}.html"
     else:
         sim_url = f"http://localhost:{PORT}/simulator.html"
-
-    meme_audio, meme_name = load_random_meme_sound()
 
     with sync_playwright() as p:
         print("Iniciant Firefox en mode headless...")
@@ -200,35 +189,29 @@ def run():
         page.goto(sim_url, wait_until="load")
         page.wait_for_timeout(1000)
 
-        # Extreure informació de la partida si el simulador la proporciona
-        col1 = page.evaluate("window.color1Name || 'PILOTA 1'")
-        col2 = page.evaluate("window.color2Name || 'PILOTA 2'")
-        rings_cnt = page.evaluate("window.ringCount || 4")
-        print(f"🎮 Duel generat: {col1} vs {col2} amb {rings_cnt} anells!")
+        total_fighters = page.evaluate("window.ringCount || 5")
+        print(f"⚔️ Batalla iniciada amb {total_fighters} boles competint!")
 
         raw_video = "raw_simulation.webm"
 
-        # Gravació reactiva fins que finalitzi la partida
         with page.expect_download(timeout=120000) as download_info:
-            print("Iniciant partida i gravació...")
+            print("Iniciant enregistrament de la batalla...")
             page.evaluate("window.startRecording()")
 
         sound_events = page.evaluate("window.soundEvents || []")
-        actual_duration = page.evaluate("window.actualDuration || 15")
+        actual_duration = page.evaluate("window.actualDuration || 20")
         winner_name = page.evaluate("window.winnerName || 'DESCONEGUT'")
 
         download = download_info.value
         download.save_as(raw_video)
         print(
-            f"Partida completada! Guanyador: {winner_name} en {actual_duration:.1f}s."
+            f"Batalla acabada! Guanyador: {winner_name} en {actual_duration:.1f}s."
         )
         browser.close()
 
-    # Generació d'àudio
     audio_file = "simulation_audio.wav"
     synthesize_soundtrack(sound_events, actual_duration, meme_audio, audio_file)
 
-    # Empaquetat MP4 vertical
     final_mp4 = "bouncelab_video.mp4"
     print("Empaquetant MP4 final amb FFmpeg...")
     subprocess.run(
@@ -262,37 +245,33 @@ def run():
         if os.path.exists(tmp):
             os.remove(tmp)
 
-    # Enviament segons el mode
-    if MODE_PROVA:
-        if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID and os.path.exists(final_mp4):
-            print("Enviant el vídeo de prova per Telegram...")
-            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVideo"
-            meme_caption = f"\n🔊 So mem: {meme_name}" if meme_name else ""
-            caption_text = (
-                f"🧪 [MODE PROVA: {active_mode.upper()}]\n"
-                f"🎬 Duel: {col1} vs {col2} ({rings_cnt} anells)!\n"
-                f"🏆 Guanyador: {winner_name}!\n"
-                f"⏱️ Durada: {actual_duration:.1f}s{meme_caption}\n"
-                f"Canal: @bouncelab.tv 🔥"
-            )
+    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID and os.path.exists(final_mp4):
+        print("Enviant el vídeo per Telegram...")
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVideo"
+        meme_caption = f"\n🔊 So de mort (mem): {meme_name}" if meme_name else ""
+        caption_text = (
+            f"⚔️ [STRING BATTLE ROYALE]\n"
+            f"🔥 {total_fighters} boles enfrontades!\n"
+            f"🏆 Guanyador invicte: {winner_name}!\n"
+            f"⏱️ Durada: {actual_duration:.1f}s{meme_caption}\n"
+            f"Canal: @bouncelab.tv 🚀"
+        )
 
-            with open(final_mp4, "rb") as f:
-                res = requests.post(
-                    url,
-                    data={
-                        "chat_id": TELEGRAM_CHAT_ID,
-                        "caption": caption_text,
-                        "supports_streaming": True,
-                    },
-                    files={"video": f},
-                    timeout=240,
-                )
-                if res.status_code == 200:
-                    print("🎉 VÍDEO ENVIAT AMB ÈXIT A TELEGRAM!")
-                else:
-                    print(f"Error Telegram: {res.text}")
-    else:
-        print("📢 Mode producció: Aquí connectarem la pujada automàtica a Buffer / xarxes socials.")
+        with open(final_mp4, "rb") as f:
+            res = requests.post(
+                url,
+                data={
+                    "chat_id": TELEGRAM_CHAT_ID,
+                    "caption": caption_text,
+                    "supports_streaming": True,
+                },
+                files={"video": f},
+                timeout=240,
+            )
+            if res.status_code == 200:
+                print("🎉 VÍDEO ENVIAT AMB ÈXIT A TELEGRAM!")
+            else:
+                print(f"Error Telegram: {res.text}")
 
 
 if __name__ == "__main__":
