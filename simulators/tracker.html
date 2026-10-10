@@ -3,6 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <title>BounceLab - Don't Lose The Red Ball</title>
+  <!-- Google Font: Lexend Bold / Black -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Lexend:wght@700;800;900&display=swap" rel="stylesheet">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -12,7 +16,7 @@
       align-items: center;
       height: 100vh;
       overflow: hidden;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-family: 'Lexend', sans-serif;
     }
     canvas {
       width: auto;
@@ -34,13 +38,15 @@
     const WIDTH = 1080, HEIGHT = 1920;
     const CENTER = { x: WIDTH / 2, y: HEIGHT / 2 };
 
-    // Jerarquia de radis: Paret exterior > Números > Boles interiors
-    const ARENA_RADIUS = 425;      // Línia blanca exterior (mur de rebot)
-    const NUMBER_RADIUS = 355;     // Anell on es pinten els números 1..15
-    const BALL_REST_RADIUS = 275;  // Anell interior on reposen les 15 boles
+    const ARENA_RADIUS = 425;      // Línia blanca exterior
+    const NUMBER_RADIUS = 355;     // Anell dels números 1..15
+    const BALL_REST_RADIUS = 275;  // Anell interior de repòs de les boles
     const BALL_RADIUS = 22;
     const NUM_BALLS = 15;
-    const BALL_SPEED = 620;        // Velocitat dinàmica i fluida (px/s)
+
+    // Velocitats per a l'acceleració progressiva
+    const START_SPEED = 160;       // Velocitat inicial suau (px/s)
+    const MAX_BALL_SPEED = 600;    // Velocitat màxima (px/s)
 
     const COLOR_BLUE = '#38bdf8';
     const COLOR_RED = '#ef4444';
@@ -66,15 +72,12 @@
     // ============================================================
     const slots = [];
     for (let i = 0; i < NUM_BALLS; i++) {
-      // Offset de mig pas perquè el 1 i el 15 quedin centrats a dalt
       const theta = -Math.PI / 2 + (2 * Math.PI / NUM_BALLS) * (i + 0.5);
       slots.push({
         number: i + 1,
         angle: theta,
-        // Posició de la bola en repòs (CERCLE INTERIOR)
         x: CENTER.x + Math.cos(theta) * BALL_REST_RADIUS,
         y: CENTER.y + Math.sin(theta) * BALL_REST_RADIUS,
-        // Posició del número (ENTRE LES BOLES I LA LÍNIA BLANCA)
         textX: CENTER.x + Math.cos(theta) * NUMBER_RADIUS,
         textY: CENTER.y + Math.sin(theta) * NUMBER_RADIUS
       });
@@ -110,25 +113,29 @@
     let lastRevealedNumIndex = 0;
 
     // ============================================================
-    // 2. FÍSICA DEL SHUFFLING (TOTA L'ARENA GRAN)
+    // 2. FÍSICA AMB ACCELERACIÓ PROGRESSIVA
     // ============================================================
     function initShufflePhysics() {
       balls.forEach(b => {
         b.color = COLOR_RED; // Totes es tornen vermelles
-        // Impuls aleatori en totes direccions per ocupar tota l'arena
         const randAng = Math.random() * Math.PI * 2;
-        b.vx = Math.cos(randAng) * BALL_SPEED;
-        b.vy = Math.sin(randAng) * BALL_SPEED;
+        b.vx = Math.cos(randAng) * START_SPEED;
+        b.vy = Math.sin(randAng) * START_SPEED;
       });
     }
 
-    function updatePhysics(dt) {
+    function updatePhysics(dt, currentTargetSpeed) {
       const SUB_STEPS = 6;
       const stepDt = dt / SUB_STEPS;
 
       for (let s = 0; s < SUB_STEPS; s++) {
-        // 1. Moure boles i rebotar contra la paret blanca exterior
+        // 1. Moure boles i rebotar contra la paret circular
         balls.forEach(ball => {
+          // Ajustar velocitat a l'acceleració actual
+          const currentSpd = Math.hypot(ball.vx, ball.vy) || 1;
+          ball.vx = (ball.vx / currentSpd) * currentTargetSpeed;
+          ball.vy = (ball.vy / currentSpd) * currentTargetSpeed;
+
           ball.x += ball.vx * stepDt;
           ball.y += ball.vy * stepDt;
 
@@ -147,8 +154,8 @@
               const ry = ball.vy - 2 * dot * ny;
               const ang = Math.atan2(ry, rx) + (Math.random() - 0.5) * 0.06;
 
-              ball.vx = Math.cos(ang) * BALL_SPEED;
-              ball.vy = Math.sin(ang) * BALL_SPEED;
+              ball.vx = Math.cos(ang) * currentTargetSpeed;
+              ball.vy = Math.sin(ang) * currentTargetSpeed;
               ball.x = CENTER.x + nx * maxDist;
               ball.y = CENTER.y + ny * maxDist;
             }
@@ -185,12 +192,12 @@
                 b2.vy += velNorm * cny;
 
                 const spd1 = Math.hypot(b1.vx, b1.vy) || 1;
-                b1.vx = (b1.vx / spd1) * BALL_SPEED;
-                b1.vy = (b1.vy / spd1) * BALL_SPEED;
+                b1.vx = (b1.vx / spd1) * currentTargetSpeed;
+                b1.vy = (b1.vy / spd1) * currentTargetSpeed;
 
                 const spd2 = Math.hypot(b2.vx, b2.vy) || 1;
-                b2.vx = (b2.vx / spd2) * BALL_SPEED;
-                b2.vy = (b2.vy / spd2) * BALL_SPEED;
+                b2.vx = (b2.vx / spd2) * currentTargetSpeed;
+                b2.vy = (b2.vy / spd2) * currentTargetSpeed;
               }
             }
           }
@@ -236,10 +243,10 @@
       ctx.fillStyle = '#000000';
       ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
-      // Títol
+      // Títol amb font Lexend Bold
       ctx.save();
       ctx.textAlign = 'center';
-      ctx.font = '800 52px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      ctx.font = '800 52px "Lexend", sans-serif';
       
       const titlePrefix = "Don't lose the ";
       const titleHighlight = "red ball";
@@ -253,8 +260,8 @@
       ctx.fillText(titleHighlight, startX + ctx.measureText(titlePrefix).width, 320);
       ctx.restore();
 
-      // Marca d'aigua
-      ctx.font = '600 32px sans-serif';
+      // Marca d'aigua inferior
+      ctx.font = '700 30px "Lexend", sans-serif';
       ctx.fillStyle = 'rgba(255, 255, 255, 0.22)';
       ctx.textAlign = 'center';
       ctx.fillText('@bouncelab.tv', CENTER.x, 1690);
@@ -277,25 +284,34 @@
             recordSound('tick', countdown);
           }
 
-          // Número gran al centre
+          // Número gran al centre amb Lexend Black
           ctx.save();
           ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
-          ctx.font = '900 240px sans-serif';
+          ctx.font = '900 240px "Lexend", sans-serif';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           ctx.fillText(countdown.toString(), CENTER.x, CENTER.y);
           ctx.restore();
 
-          // Dibuixar els números 1..15 entre les boles i la línia blanca
+          // Números 1..15 entre les boles i la línia blanca
           ctx.save();
           ctx.fillStyle = '#ffffff';
-          ctx.font = '700 32px sans-serif';
+          ctx.font = '800 32px "Lexend", sans-serif';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           slots.forEach(s => ctx.fillText(s.number.toString(), s.textX, s.textY));
           ctx.restore();
 
-          // Fletxa i text 'FOLLOW THE BALL'
+          // TEXT "FOLLOW THE RED BALL" FIX A BAIX DE TOT
+          ctx.save();
+          ctx.fillStyle = '#ffffff';
+          ctx.font = '800 28px "Lexend", sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('FOLLOW THE RED BALL', CENTER.x, 1450);
+          ctx.restore();
+
+          // Fletxa assenyalant la bola vermella (només la fletxa)
           const targetBall = balls.find(b => b.isTarget);
           if (targetBall) {
             const dirX = Math.cos(slots[targetSlotIndex].angle);
@@ -309,37 +325,36 @@
             ctx.save();
             ctx.fillStyle = '#ffffff';
             ctx.strokeStyle = '#ffffff';
-            ctx.lineWidth = 3;
+            ctx.lineWidth = 3.5;
 
-            // Cos de la fletxa
             ctx.beginPath();
             ctx.moveTo(arrowStartX, arrowStartY);
             ctx.lineTo(arrowEndX, arrowEndY);
             ctx.stroke();
 
-            // Cap de la fletxa
-            const headlen = 12;
+            const headlen = 14;
             const angle = Math.atan2(arrowEndY - arrowStartY, arrowEndX - arrowStartX);
             ctx.beginPath();
             ctx.moveTo(arrowEndX, arrowEndY);
             ctx.lineTo(arrowEndX - headlen * Math.cos(angle - Math.PI / 6), arrowEndY - headlen * Math.sin(angle - Math.PI / 6));
             ctx.lineTo(arrowEndX - headlen * Math.cos(angle + Math.PI / 6), arrowEndY - headlen * Math.sin(angle + Math.PI / 6));
             ctx.fill();
-
-            // Text
-            ctx.font = '800 22px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('FOLLOW THE BALL', arrowStartX + dirX * 115, arrowStartY + dirY * 24);
             ctx.restore();
           }
 
         } else if (elapsed < 18.0) {
-          // FASE 2: SHUFFLING CAÒTIC (15s)
+          // FASE 2: SHUFFLING CAÒTIC AMB ACCELERACIÓ PROGRESSIVA
           if (!shuffleStarted) {
             shuffleStarted = true;
             initShufflePhysics();
             lastTickSecond = 16;
+          }
+
+          // Càlcul de la velocitat progressiva durant els primers 3 segons (3s a 6s)
+          let currentTargetSpeed = MAX_BALL_SPEED;
+          if (elapsed < 6.0) {
+            const rampProgress = (elapsed - 3.0) / 3.0; // de 0.0 a 1.0
+            currentTargetSpeed = START_SPEED + (MAX_BALL_SPEED - START_SPEED) * rampProgress;
           }
 
           const timeLeft = Math.max(1, Math.ceil(18.0 - elapsed));
@@ -348,19 +363,18 @@
             recordSound('tick', timeLeft);
           }
 
-          // Comptador gran al centre
           ctx.save();
           ctx.fillStyle = 'rgba(255, 255, 255, 0.13)';
-          ctx.font = '900 240px sans-serif';
+          ctx.font = '900 240px "Lexend", sans-serif';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           ctx.fillText(timeLeft.toString(), CENTER.x, CENTER.y);
           ctx.restore();
 
-          updatePhysics(dt);
+          updatePhysics(dt, currentTargetSpeed);
 
         } else if (elapsed < 19.8) {
-          // FASE 3: RETORN SUAU AL CERCLE INTERIOR I APARICIÓ DE NÚMEROS
+          // FASE 3: RETORN SUAU AL CERCLE INTERIOR
           if (!slotAssigned) {
             assignFinalSlots();
             slotAssigned = true;
@@ -385,7 +399,7 @@
 
           ctx.save();
           ctx.fillStyle = '#ffffff';
-          ctx.font = '700 32px sans-serif';
+          ctx.font = '800 32px "Lexend", sans-serif';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
 
@@ -398,7 +412,7 @@
           // FASE 4: REVELACIÓ GUANYADORA
           ctx.save();
           ctx.fillStyle = '#ffffff';
-          ctx.font = '700 32px sans-serif';
+          ctx.font = '800 32px "Lexend", sans-serif';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           slots.forEach(s => ctx.fillText(s.number.toString(), s.textX, s.textY));
@@ -421,7 +435,6 @@
             const dirX = Math.cos(winningBall.targetSlot.angle);
             const dirY = Math.sin(winningBall.targetSlot.angle);
 
-            // Fletxa des de fora apuntant cap a la bola
             const arrowStartX = winningBall.x + dirX * 65;
             const arrowStartY = winningBall.y + dirY * 65;
             const arrowEndX = winningBall.x + dirX * 28;
@@ -520,7 +533,10 @@
       }, 23000);
     };
 
-    requestAnimationFrame(render);
+    // Assegurar que la font Lexend estigui llesta abans de renderitzar
+    document.fonts.ready.then(() => {
+      requestAnimationFrame(render);
+    });
   </script>
 </body>
 </html>
