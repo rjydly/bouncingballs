@@ -35,8 +35,8 @@
     const CENTER = { x: WIDTH / 2, y: HEIGHT / 2 };
     const ARENA_RADIUS = 465;
 
-    // LÍMITS DE DURADA GARANTITS (28s a 75s = < 1.5 minuts)
-    const MIN_DURATION = 28;
+    // LÍMITS DE DURADA GARANTITS: Entre 18s i 75s (< 1.5 minuts)
+    const MIN_DURATION = 18;
     const MAX_DURATION = 75;
 
     window.soundEvents = [];
@@ -81,9 +81,9 @@
     // ==========================================
     // 2. FÍSICA ESCALABLE (INICI CALMAT -> CLÍMAX RÀPID)
     // ==========================================
-    const GRAVITY = 0.40;                   // Gravetat suau per permetre trajectòries amples
-    const INDIVIDUAL_BOUNCE_ACCEL = 1.025;  // +2.5% de velocitat addicional a cada rebot de paret
-    const MAX_SPEED = 45;                   // Velocitat màxima en el duel final
+    const GRAVITY = 0.40;
+    const INDIVIDUAL_BOUNCE_ACCEL = 1.025;
+    const MAX_SPEED = 45;
     const BALL_RADIUS = 20;
 
     function distPointToSegment(px, py, x1, y1, x2, y2) {
@@ -113,7 +113,7 @@
         const bx = CENTER.x + Math.cos(midAngle) * spawnDist;
         const by = CENTER.y + Math.sin(midAngle) * spawnDist;
 
-        // VELOCITAT INICIAL CALMADA (13 a 16 px/fotograma)
+        // Velocitat inicial calmada (13.5 a 16 px/frame)
         const moveAngle = midAngle + Math.PI + (Math.random() - 0.5) * 1.2;
         const initialSpeed = 13.5 + Math.random() * 2.5;
 
@@ -148,7 +148,7 @@
     }
 
     // ==========================================
-    // 3. PRE-SIMULACIÓ (FILTRE ESTRICTE 28s - 75s)
+    // 3. PRE-SIMULACIÓ (FILTRE ESTRICTE 18s - 75s)
     // ==========================================
     function simulateBattle(setup, maxAllowedSec) {
       const testBalls = setup.balls.map(b => ({
@@ -183,7 +183,7 @@
             const dy = ball.y - CENTER.y;
             const dist = Math.hypot(dx, dy);
 
-            // Rebot de paret: accelera individualment aquesta bola
+            // Rebot de paret: acceleració individual de la bola
             if (dist >= ARENA_RADIUS - ball.radius) {
               const nx = dx / (dist || 1);
               const ny = dy / (dist || 1);
@@ -536,6 +536,7 @@
         ctx.shadowColor = 'rgba(255, 255, 255, 0.6)';
         ctx.fillText('LAST ONE STANDING! ⚔️', CENTER.x, 230);
 
+        // Comptador de línies de cadascuna
         ctx.font = '700 30px sans-serif';
         const spacingX = Math.min(130, (WIDTH - 120) / balls.length);
         const startX = CENTER.x - ((balls.length - 1) * spacingX) / 2;
