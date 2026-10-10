@@ -193,6 +193,7 @@ def synthesize_soundtrack(
                 meme_audio[:n_samples] * 0.95
             )
         elif is_reveal:
+            # Acord triomfant d'escapada
             note_len = 1.4
             n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
             t = np.linspace(0, note_len, n_samples, False)
@@ -204,6 +205,7 @@ def synthesize_soundtrack(
             ) * np.exp(-3.2 * t)
             audio_data[start_sample : start_sample + n_samples] += chord
         elif ev_type == "burst":
+            # Pop de punxa (mort de la bola)
             note_len = 0.16
             n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
             t = np.linspace(0, note_len, n_samples, False)
@@ -213,6 +215,7 @@ def synthesize_soundtrack(
             ) * np.exp(-22 * t)
             audio_data[start_sample : start_sample + n_samples] += burst * 0.55
         else:
+            # Rebot suau contra les boles grises
             freq = FREQUENCIES[note_idx % len(FREQUENCIES)]
             note_len = 0.08
             n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
