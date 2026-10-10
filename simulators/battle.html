@@ -79,13 +79,13 @@
     ];
 
     // ==========================================
-    // 2. FÍSICA: +3.5% D'ACCELERACIÓ PER REBOT
+    // 2. FÍSICA: +6.0% D'ACCELERACIÓ PER REBOT
     // ==========================================
     const GRAVITY = 0.0;                   // Zero gravity: moviment lliure en 360°
-    const INITIAL_SPEED = 8.5;             // Mateixa velocitat inicial per a totes les boles
+    const INITIAL_SPEED = 8.5;             // Mateixa velocitat inicial per a totes
     const MIN_SPEED = 8.0;
-    const INDIVIDUAL_BOUNCE_ACCEL = 1.035; // +3.5% a cada rebot de paret
-    const MAX_SPEED = 42;
+    const INDIVIDUAL_BOUNCE_ACCEL = 1.06;  // +6.0% a cada rebot de paret
+    const MAX_SPEED = 44;
     const BALL_RADIUS = 20;
 
     // Distància matemàtica exacta d'un punt a un segment
@@ -184,7 +184,7 @@
             const dy = ball.y - CENTER.y;
             const dist = Math.hypot(dx, dy);
 
-            // Rebot de paret: afegeix una corda nova i accelera +3.5%
+            // Rebot de paret: afegeix una corda nova i accelera +6%
             if (dist >= ARENA_RADIUS - ball.radius) {
               const nx = dx / (dist || 1);
               const ny = dy / (dist || 1);
@@ -365,7 +365,7 @@
           const dy = ball.y - CENTER.y;
           const dist = Math.hypot(dx, dy);
 
-          // Rebot de paret: afegeix nova corda i accelera +3.5%
+          // Rebot de paret: afegeix nova corda i accelera +6%
           if (dist >= ARENA_RADIUS - ball.radius) {
             const nx = dx / (dist || 1);
             const ny = dy / (dist || 1);
