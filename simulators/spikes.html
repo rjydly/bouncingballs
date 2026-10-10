@@ -51,17 +51,17 @@
     const CENTER = { x: WIDTH / 2, y: HEIGHT / 2 };
 
     const ARENA_RADIUS = 410;
-    const SPIKE_HEIGHT = 32;
-    const BALL_RADIUS = 21;
-    const GRAVITY = 950;              // Gravetat cap avall (px/s²)
-    const INITIAL_SPEED = 620;        // Velocitat d'arrencada de cada bola
-    const BOUNCE_RESTITUTION = 1.015; // Elasticitat en xocar contra boles grises
+    const SPIKE_HEIGHT = 48;          // Punxes més altes i afilades (abans 32)
+    const BALL_RADIUS = 20;
+    const GRAVITY = 950;              // Gravetat realista (px/s²)
+    const INITIAL_SPEED = 620;
+    const BOUNCE_RESTITUTION = 1.018; // Rebot elàstic amb bona energia
     const MAX_SPEED = 920;
     const MIN_SPEED = 380;
 
     // Escletxa fixa a la part inferior-esquerra (~135 graus / 7:30h)
-    const GAP_ANGLE = 2.35;           // Radians
-    const GAP_SIZE = 0.50;            // ~29 graus d'obertura
+    const GAP_ANGLE = 2.35;
+    const GAP_SIZE = 0.48;            // Obertura neta
 
     // Filtre matemàtic de durada (25s a 60s)
     const STRICT_MIN_DURATION = 25.0;
@@ -99,9 +99,6 @@
       }
     }
 
-    // ============================================================
-    // 1. GENERADOR DETERMINISTA (PRNG)
-    // ============================================================
     function createPRNG(seed) {
       let s = seed % 2147483647;
       if (s <= 0) s += 2147483646;
@@ -111,7 +108,6 @@
       };
     }
 
-    // Funció auxiliar per comprovar si un angle cau a l'escletxa
     function isInGap(angle) {
       let diff = Math.abs(angle - GAP_ANGLE) % (Math.PI * 2);
       if (diff > Math.PI) diff = Math.PI * 2 - diff;
@@ -119,26 +115,29 @@
     }
 
     // ============================================================
-    // 2. PRE-SIMULACIÓ MATEMÀTICA (FILTRA PARTIDA ENTRE 25s I 60s)
+    // 1. PRE-SIMULACIÓ (DIRECCIÓ I VELOCITAT IDÈNTICA PER A TOTES)
     // ============================================================
     function simulateCandidate(seed) {
       const rnd = createPRNG(seed);
       let simTime = 0;
       let deadBalls = [];
 
-      let ballAng = rnd() * Math.PI * 2;
-      let b = {
-        x: CENTER.x,
-        y: CENTER.y - 60,
-        vx: Math.cos(ballAng) * INITIAL_SPEED,
-        vy: Math.sin(ballAng) * INITIAL_SPEED
-      };
+      // PUNT DE SORTIDA I VELOCITAT INICIAL FIXA PER A TOTES LES BOLES
+      const spawnX = CENTER.x;
+      const spawnY = CENTER.y - 80;
+      const launchAng = rnd() * Math.PI * 2;
+      const launchSpd = INITIAL_SPEED + (rnd() - 0.5) * 60;
+      const vx0 = Math.cos(launchAng) * launchSpd;
+      const vy0 = Math.sin(launchAng) * launchSpd;
+
+      let b = { x: spawnX, y: spawnY, vx: vx0, vy: vy0, lifetime: 0 };
 
       const DT = 1 / 60;
       const MAX_SIM_TIME = STRICT_MAX_DURATION + 1.0;
 
       while (simTime < MAX_SIM_TIME) {
         simTime += DT;
+        b.lifetime += DT;
 
         b.vy += GRAVITY * DT;
         b.x += b.vx * DT;
@@ -160,7 +159,7 @@
         let hitAng = Math.atan2(dy, dx);
         if (hitAng < 0) hitAng += Math.PI * 2;
 
-        // 1. Rebot segur contra boles grises mortes (escuts)
+        // 1. Rebot segur contra les boles grises mortes anteriors
         let hitDead = false;
         for (let i = 0; i < deadBalls.length; i++) {
           const d = deadBalls[i];
@@ -186,35 +185,28 @@
 
         if (hitDead) continue;
 
-        // 2. Comprovació de l'escletxa i les punxes
+        // 2. Comprovació d'escletxa i punxes
         if (isInGap(hitAng)) {
-          // Ha passat per l'obertura!
           if (dist > ARENA_RADIUS + BALL_RADIUS + 10) {
             if (simTime >= STRICT_MIN_DURATION && simTime <= STRICT_MAX_DURATION && deadBalls.length >= 4) {
-              return { success: true, duration: simTime, deadCount: deadBalls.length, seed };
+              return { success: true, duration: simTime, deadCount: deadBalls.length, seed, vx0, vy0 };
             }
             return { success: false, duration: simTime };
           }
         } else {
-          // Si entra a la zona de les punxes -> MOR!
-          if (dist >= ARENA_RADIUS - SPIKE_HEIGHT + BALL_RADIUS * 0.45) {
-            const nx = dx / (dist || 1);
-            const ny = dy / (dist || 1);
+          // Si toca una punxa lliure -> MOR!
+          if (dist >= ARENA_RADIUS - SPIKE_HEIGHT + BALL_RADIUS * 0.40) {
+            // Guarda la bola morta exactament a la posició d'impacte
+            deadBalls.push({ x: b.x, y: b.y });
 
-            // Deixa la bola grisa col·locada just sobre la punxa
-            const deadX = CENTER.x + nx * (ARENA_RADIUS - SPIKE_HEIGHT * 0.45);
-            const deadY = CENTER.y + ny * (ARENA_RADIUS - SPIKE_HEIGHT * 0.45);
-            deadBalls.push({ x: deadX, y: deadY });
-
-            // Genera immediatament la següent bola viva des de dalt
-            const nextAng = rnd() * Math.PI * 2;
-            b = {
-              x: CENTER.x,
-              y: CENTER.y - 60,
-              vx: Math.cos(nextAng) * INITIAL_SPEED,
-              vy: Math.sin(nextAng) * INITIAL_SPEED
-            };
+            // LA SEGÜENT BOLA SURT AMB LA MATEIXA VELOCITAT I DIRECCIÓ EXACTA
+            b = { x: spawnX, y: spawnY, vx: vx0, vy: vy0, lifetime: 0 };
           }
+        }
+
+        // Evitar bucles infinits si una bola rebota massa estona
+        if (b.lifetime > 12.0) {
+          return { success: false, duration: simTime };
         }
       }
 
@@ -222,13 +214,13 @@
     }
 
     function findBestSimulation() {
-      console.log(`🔍 Cercant partida garantida entre ${STRICT_MIN_DURATION}s i ${STRICT_MAX_DURATION}s...`);
-      let bestFallback = { seed: 55, deadCount: 6 };
+      console.log(`🔍 Cercant partida amb efecte dòmino (durada garantida ${STRICT_MIN_DURATION}s - ${STRICT_MAX_DURATION}s)...`);
+      let bestFallback = { seed: 82, vx0: 380, vy0: 420, deadCount: 6 };
 
-      for (let s = 1; s < 1500; s++) {
+      for (let s = 1; s < 1800; s++) {
         const res = simulateCandidate(s);
         if (res.success) {
-          console.log(`✅ PARTIDA TROBADA (Intent #${s})! Durada: ${res.duration.toFixed(1)}s, Boles sacrificades: ${res.deadCount}`);
+          console.log(`✅ PARTIDA DÒMINO TROBADA (Intent #${s})! Durada: ${res.duration.toFixed(1)}s, Sacrificis: ${res.deadCount}`);
           return res;
         }
       }
@@ -239,21 +231,25 @@
     const optimalSeed = optimalMatch.seed;
     const gameRND = createPRNG(optimalSeed);
 
+    // VALORS INICIALS COMPARTITS PER A TOTES LES BOLES D'AQUEST VÍDEO
+    const SPAWN_X = CENTER.x;
+    const SPAWN_Y = CENTER.y - 80;
+    const INITIAL_VX = optimalMatch.vx0;
+    const INITIAL_VY = optimalMatch.vy0;
+
     // ============================================================
-    // 3. ESTAT DEL JOC
+    // 2. ESTAT DEL JOC
     // ============================================================
     let deadBalls = [];
     let currentBallNumber = 1;
 
-    // Tria el color de la primera bola
     let currentBallColor = NEON_PALETTE[Math.floor(Math.random() * NEON_PALETTE.length)];
-    let activeBallAng = gameRND() * Math.PI * 2;
 
     let activeBall = {
-      x: CENTER.x,
-      y: CENTER.y - 60,
-      vx: Math.cos(activeBallAng) * INITIAL_SPEED,
-      vy: Math.sin(activeBallAng) * INITIAL_SPEED,
+      x: SPAWN_X,
+      y: SPAWN_Y,
+      vx: INITIAL_VX,
+      vy: INITIAL_VY,
       color: currentBallColor.color,
       glow: currentBallColor.glow,
       trail: []
@@ -278,11 +274,10 @@
     }
 
     function spawnRingShatter() {
-      // Explosió colossal de tot l'anell
       for (let i = 0; i < 280; i++) {
         const ang = Math.random() * Math.PI * 2;
-        const r = ARENA_RADIUS - 15 + Math.random() * 30;
-        const spd = 5 + Math.random() * 26;
+        const r = ARENA_RADIUS - 20 + Math.random() * 40;
+        const spd = 6 + Math.random() * 26;
         ringShatterParticles.push({
           x: CENTER.x + Math.cos(ang) * r,
           y: CENTER.y + Math.sin(ang) * r,
@@ -295,7 +290,7 @@
     }
 
     // ============================================================
-    // 4. BUCLE DE FÍSICA
+    // 3. FÍSICA EN TEMPS REAL
     // ============================================================
     function updatePhysics(dt) {
       if (!isRunning || hasEscaped) return;
@@ -324,7 +319,7 @@
         let hitAng = Math.atan2(dy, dx);
         if (hitAng < 0) hitAng += Math.PI * 2;
 
-        // 1. Rebot segur contra les boles grises mortes (escut protector)
+        // 1. Rebot segur contra boles grises mortes anteriors
         let hitDead = false;
         for (let i = 0; i < deadBalls.length; i++) {
           const d = deadBalls[i];
@@ -354,7 +349,6 @@
 
         // 2. Comprovació d'escletxa i punxes
         if (isInGap(hitAng)) {
-          // Ha escapat lliurement per l'escletxa!
           if (dist > ARENA_RADIUS + BALL_RADIUS + 10) {
             hasEscaped = true;
             isFinished = true;
@@ -373,28 +367,21 @@
             return;
           }
         } else {
-          // Toca la punxa descoberta -> MOR!
-          if (dist >= ARENA_RADIUS - SPIKE_HEIGHT + BALL_RADIUS * 0.45) {
-            const nx = dx / (dist || 1);
-            const ny = dy / (dist || 1);
-
-            const deadX = CENTER.x + nx * (ARENA_RADIUS - SPIKE_HEIGHT * 0.45);
-            const deadY = CENTER.y + ny * (ARENA_RADIUS - SPIKE_HEIGHT * 0.45);
-
-            deadBalls.push({ x: deadX, y: deadY });
-            spawnDeathBurst(deadX, deadY, activeBall.color);
+          // Toca la punxa afilada -> MOR!
+          if (dist >= ARENA_RADIUS - SPIKE_HEIGHT + BALL_RADIUS * 0.40) {
+            deadBalls.push({ x: activeBall.x, y: activeBall.y });
+            spawnDeathBurst(activeBall.x, activeBall.y, activeBall.color);
             recordSound('burst', 3);
 
-            // Generar immediatament la següent bola viva amb un nou color
+            // Generar la següent bola amb LA MATEIXA VELOCITAT I TRAJECTÒRIA INICIAL
             currentBallNumber++;
             const nextColObj = NEON_PALETTE[Math.floor(Math.random() * NEON_PALETTE.length)];
-            const nextAng = gameRND() * Math.PI * 2;
 
             activeBall = {
-              x: CENTER.x,
-              y: CENTER.y - 60,
-              vx: Math.cos(nextAng) * INITIAL_SPEED,
-              vy: Math.sin(nextAng) * INITIAL_SPEED,
+              x: SPAWN_X,
+              y: SPAWN_Y,
+              vx: INITIAL_VX,
+              vy: INITIAL_VY,
               color: nextColObj.color,
               glow: nextColObj.glow,
               trail: []
@@ -409,7 +396,7 @@
     }
 
     // ============================================================
-    // 5. RENDERITZAT VISUAL
+    // 4. RENDERITZAT VISUAL
     // ============================================================
     let lastTime = null;
 
@@ -432,32 +419,34 @@
       ctx.fillText('LOSE THE BALL', CENTER.x, 375);
       ctx.restore();
 
-      // Dibuix de l'anell amb gradient neó i punxes triangulars
+      // Dibuix de l'anell amb punxes afilades (SPIKE_HEIGHT = 48)
       if (!hasEscaped) {
         ctx.save();
 
-        // Gradient neó de l'anell
-        const gradient = ctx.createLinearGradient(CENTER.x - ARENA_RADIUS, CENTER.y - ARENA_RADIUS, CENTER.x + ARENA_RADIUS, CENTER.y + ARENA_RADIUS);
+        const gradient = ctx.createLinearGradient(
+          CENTER.x - ARENA_RADIUS, CENTER.y - ARENA_RADIUS,
+          CENTER.x + ARENA_RADIUS, CENTER.y + ARENA_RADIUS
+        );
         gradient.addColorStop(0.0, '#3b82f6'); // Blau
         gradient.addColorStop(0.4, '#8b5cf6'); // Morat
         gradient.addColorStop(0.7, '#d946ef'); // Fúcsia
-        gradient.addColorStop(1.0, '#f43f5e'); // Vermell-rosa
+        gradient.addColorStop(1.0, '#f43f5e'); // Rosa-vermell
 
         ctx.strokeStyle = gradient;
         ctx.fillStyle = gradient;
         ctx.lineWidth = 4.5;
-        ctx.shadowBlur = 18;
+        ctx.shadowBlur = 20;
         ctx.shadowColor = '#d946ef';
 
-        // 1. Arc circular de l'anell exterior (amb l'escletxa buida)
+        // 1. Base circular de l'anell
         ctx.beginPath();
         const startGap = GAP_ANGLE + GAP_SIZE / 2;
         const endGap = GAP_ANGLE - GAP_SIZE / 2 + Math.PI * 2;
         ctx.arc(CENTER.x, CENTER.y, ARENA_RADIUS, startGap, endGap);
         ctx.stroke();
 
-        // 2. Punxes triangulars cap a l'interior
-        const NUM_SPIKES = 42;
+        // 2. Punxes triangulars altes i punxagudes
+        const NUM_SPIKES = 44;
         const stepAngle = (Math.PI * 2) / NUM_SPIKES;
 
         for (let i = 0; i < NUM_SPIKES; i++) {
@@ -465,7 +454,6 @@
           const a2 = (i + 1) * stepAngle;
           const amid = (a1 + a2) / 2;
 
-          // No dibuixar punxes dins de l'escletxa
           if (isInGap(amid) || isInGap(a1) || isInGap(a2)) continue;
 
           const p1x = CENTER.x + Math.cos(a1) * ARENA_RADIUS;
@@ -485,7 +473,7 @@
         ctx.restore();
       }
 
-      // Partícules de mort
+      // Partícules d'impacte
       particles.forEach(p => {
         p.x += p.vx;
         p.y += p.vy;
@@ -497,7 +485,7 @@
       });
       particles = particles.filter(p => p.life > 0);
 
-      // Partícules d'explosió total de l'anell
+      // Partícules d'explosió final
       ringShatterParticles.forEach(p => {
         p.x += p.vx;
         p.y += p.vy;
@@ -511,7 +499,7 @@
 
       // BOLES GRISES MORTES (ESCUTS COIXÍ)
       ctx.save();
-      ctx.fillStyle = '#64748b'; // Gris sòlid net
+      ctx.fillStyle = '#64748b'; // Rodona grisa sòlida
       deadBalls.forEach(d => {
         ctx.beginPath();
         ctx.arc(d.x, d.y, BALL_RADIUS, 0, Math.PI * 2);
@@ -519,7 +507,7 @@
       });
       ctx.restore();
 
-      // Estela de la bola viva
+      // Estela de la bola activa
       activeBall.trail.forEach((pt, i) => {
         const alpha = (i + 1) / activeBall.trail.length;
         ctx.save();
@@ -542,7 +530,7 @@
       ctx.fill();
       ctx.restore();
 
-      // Pantalla de victòria
+      // Pantalla de victòria final
       if (hasEscaped) {
         ctx.save();
         ctx.textAlign = 'center';
@@ -560,9 +548,13 @@
         ctx.restore();
       }
 
-      // Marca d'aigua inferior
+      // Marcador inferior
       ctx.save();
       ctx.textAlign = 'center';
+      ctx.font = '800 36px Lexend, sans-serif';
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(`SACRIFICES: ${deadBalls.length}`, CENTER.x, HEIGHT - 330);
+
       ctx.font = '700 28px Lexend, sans-serif';
       ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
       ctx.fillText('@bouncelab.tv', CENTER.x, HEIGHT - 230);
@@ -573,7 +565,7 @@
     }
 
     // ============================================================
-    // 6. MEDIARECORDER
+    // 5. MEDIARECORDER
     // ============================================================
     let mediaRecorder;
     let recordedChunks = [];
@@ -616,7 +608,6 @@
 
       mediaRecorder.start();
 
-      // Topall ampli per cobrir partides de fins a 65s
       setTimeout(() => {
         if (mediaRecorder.state !== 'inactive') {
           window.actualDuration = (performance.now() - startTime) / 1000;
