@@ -19,7 +19,7 @@ MODE_PROVA = True
 
 # Quin tipus de vídeo vols provar ara mateix (nom del fitxer a la carpeta simulators/):
 # Exemples: "classic", "lines", "paint", "grow", "shatter"
-SELECTED_MODE = "classic"
+SELECTED_MODE = "lines"
 # ==============================================================================
 
 PORT = 8080
