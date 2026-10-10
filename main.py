@@ -10,9 +10,6 @@ from playwright.sync_api import sync_playwright
 import requests
 
 PORT = 8080
-DURATION = int(os.environ.get("DURATION", 30))
-RINGS = int(os.environ.get("RINGS", 7))
-TWO_BALLS = os.environ.get("TWO_BALLS", "1")  # 1 = Sí, 0 = No
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
@@ -31,7 +28,6 @@ def synthesize_soundtrack(sound_events, duration_sec, output_wav="audio.wav"):
     total_samples = int((duration_sec + 1) * SAMPLE_RATE)
     audio_data = np.zeros(total_samples, dtype=np.float32)
 
-    # Escala pentatònica enriquida (C Major / A Minor)
     FREQUENCIES = [
         261.63,
         293.66,
@@ -60,14 +56,13 @@ def synthesize_soundtrack(sound_events, duration_sec, output_wav="audio.wav"):
             if is_escape
             else FREQUENCIES[note_idx % len(FREQUENCIES)]
         )
-        note_len = 0.45 if is_escape else 0.22
+        note_len = 0.45 if is_escape else 0.18
         n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
         t = np.linspace(0, note_len, n_samples, False)
 
-        decay_rate = 12 if is_escape else 18
+        decay_rate = 12 if is_escape else 20
         envelope = np.exp(-decay_rate * t)
 
-        # To ric estil marimba amb harmònics
         wave_tone = (
             0.60 * np.sin(2 * np.pi * freq * t)
             + 0.25 * np.sin(2 * np.pi * (freq * 2) * t)
@@ -89,7 +84,9 @@ def synthesize_soundtrack(sound_events, duration_sec, output_wav="audio.wav"):
         wf.setframerate(SAMPLE_RATE)
         wf.writeframes(audio_int16.tobytes())
 
-    print(f"🎵 Pista d'àudio sintetitzada ({len(sound_events)} impactes).")
+    print(
+        f"🎵 Pista d'àudio sintetitzada ({len(sound_events)} impactes, {duration_sec:.1f}s)."
+    )
 
 
 def run():
@@ -106,30 +103,31 @@ def run():
 
         page = context.new_page()
 
-        sim_url = f"http://localhost:{PORT}/simulator.html?duration={DURATION}&rings={RINGS}&twoBalls={TWO_BALLS}"
-        print(f"Carregant simulador ({DURATION}s, {RINGS} anells, dues pilotes={TWO_BALLS})...")
+        sim_url = f"http://localhost:{PORT}/simulator.html"
+        print("Carregant simulador amb durada dinàmica (fins que escapin)...")
         page.goto(sim_url, wait_until="load")
         page.wait_for_timeout(1500)
 
         raw_video = "raw_simulation.webm"
 
-        with page.expect_download(timeout=(DURATION + 60) * 1000) as download_info:
-            print(f"Enregistrant partida durant {DURATION} segons...")
+        # Espera reactiva: s'espera fins que l'HTML acabi la partida i descarregui el vídeo
+        with page.expect_download(timeout=90000) as download_info:
+            print("Simulació en marxa. Esperant el desenllaç...")
             page.evaluate("window.startRecording()")
-            page.wait_for_timeout((DURATION + 3) * 1000)
 
         sound_events = page.evaluate("window.soundEvents || []")
+        actual_duration = page.evaluate("window.actualDuration || 20")
 
         download = download_info.value
         download.save_as(raw_video)
-        print("Gravació WebM descarregada!")
+        print(f"Partida finalitzada en {actual_duration:.1f} segons!")
         browser.close()
 
-    # Generar àudio sincronitzat
+    # Generar àudio amb la durada real de la partida
     audio_file = "simulation_audio.wav"
-    synthesize_soundtrack(sound_events, DURATION, audio_file)
+    synthesize_soundtrack(sound_events, actual_duration, audio_file)
 
-    # Fusionar a MP4 vertical per a TikTok/Telegram
+    # Fusionar vídeo i àudio
     final_mp4 = "bouncelab_video.mp4"
     print("Empaquetant MP4 final amb FFmpeg...")
     subprocess.run(
@@ -172,14 +170,14 @@ def run():
                 url,
                 data={
                     "chat_id": TELEGRAM_CHAT_ID,
-                    "caption": f"🎬 Nou vídeo generat (Dues Pilotes + Rainbow)!\n⏱️ {DURATION}s | Canal: @bouncelab.tv 🔥",
+                    "caption": f"🎬 Vídeo finalitzat!\n⏱️ Durada real: {actual_duration:.1f}s (fins a l'escapada)\nCanal: @bouncelab.tv 🔥",
                     "supports_streaming": True,
                 },
                 files={"video": f},
                 timeout=180,
             )
             if res.status_code == 200:
-                print("🎉 VÍDEO AMB DUES PILOTES I ESTELA ENVIAT A TELEGRAM!")
+                print("🎉 VÍDEO ENVIAT AMB ÈXIT A TELEGRAM!")
             else:
                 print(f"Error Telegram: {res.text}")
 
