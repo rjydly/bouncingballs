@@ -32,4 +32,5 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python main.py
+        # NOTA: Afegim xvfb-run per donar-li pantalla virtual i evitar que tanqui el navegador
+        run: xvfb-run --auto-servernum python main.py
