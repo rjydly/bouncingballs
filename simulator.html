@@ -26,7 +26,9 @@
   <canvas id="canvas" width="1080" height="1920"></canvas>
 
   <script>
-    // PARÀMETRES DE LA URL (ex: ?duration=18)
+    // ==========================================
+    // 0. CONFIGURACIÓ I PARÀMETRES
+    // ==========================================
     const urlParams = new URLSearchParams(window.location.search);
     const RECORD_DURATION = parseInt(urlParams.get('duration') || '18', 10);
 
@@ -42,11 +44,13 @@
     const audioCtx = new AudioContext();
     const audioDest = audioCtx.createMediaStreamDestination();
 
-    // Escala pentatònica menor harmònica (frecuencias en Hz)
+    // Escala pentatònica menor harmònica (Hz)
     const NOTES = [261.63, 293.66, 329.63, 392.00, 440.00, 523.25, 587.33, 659.25, 783.99, 880.00];
 
     function playNote(freqIndex, isEscape = false) {
-      if (audioCtx.state === 'suspended') audioCtx.resume();
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
       const osc = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
 
@@ -106,7 +110,8 @@
         const ang = Math.random() * Math.PI * 2;
         const spd = 4 + Math.random() * 10;
         particles.push({
-          x, y,
+          x: x,
+          y: y,
           vx: Math.cos(ang) * spd,
           vy: Math.sin(ang) * spd,
           life: 30,
@@ -116,10 +121,10 @@
     }
 
     // ==========================================
-    // 3. BUCLE PRINCIPAL DE DIBUIXAT
+    // 3. ACTUALITZACIÓ FÍSICA I RENDERITZAT
     // ==========================================
     function updatePhysics() {
-      // Sub-stepping per evitar travessar anells a alta velocitat
+      // Sub-stepping de 4 passos per evitar que la pilota travessi parets a alta velocitat
       const STEPS = 4;
       for (let s = 0; s < STEPS; s++) {
         ball.vy += GRAVITY / STEPS;
@@ -150,7 +155,7 @@
               playNote(idx, true);
               createParticles(ball.x, ball.y, ring.hue);
             } else {
-              // Rebot elàstic normalitzat
+              // Rebot elàstic
               const nx = dx / dist;
               const ny = dy / dist;
               const dot = ball.vx * nx + ball.vy * ny;
@@ -167,12 +172,12 @@
         });
       }
 
-      // Actualitzar anells
+      // Rotació d'anells
       rings.forEach(r => {
         if (r.alive) r.gapAngle = (r.gapAngle + r.speed) % (Math.PI * 2);
       });
 
-      // Trail
+      // Rastre de la pilota
       ball.trail.push({ x: ball.x, y: ball.y });
       if (ball.trail.length > 20) ball.trail.shift();
     }
@@ -181,7 +186,7 @@
       ctx.fillStyle = '#05070e';
       ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
-      // Dibuixar Anells amb resplendor Neó
+      // Anells amb resplendor Neó
       rings.forEach(ring => {
         if (!ring.alive) return;
         ctx.save();
@@ -199,7 +204,7 @@
         ctx.restore();
       });
 
-      // Rastro de la bola
+      // Estela
       ball.trail.forEach((pt, i) => {
         const alpha = (i + 1) / ball.trail.length;
         ctx.fillStyle = `rgba(255, 255, 255, ${alpha * 0.4})`;
@@ -209,7 +214,7 @@
       });
 
       // Partícules
-      particles.forEach((p, i) => {
+      particles.forEach(p => {
         p.x += p.vx;
         p.y += p.vy;
         p.life--;
@@ -230,13 +235,13 @@
       ctx.fill();
       ctx.restore();
 
-      // Marca d'aigua pròpia al centre
+      // Marca d'aigua pròpia
       ctx.font = '600 32px sans-serif';
       ctx.fillStyle = 'rgba(255, 255, 255, 0.22)';
       ctx.textAlign = 'center';
       ctx.fillText('bouncelab.tv', CENTER.x, CENTER.y + 12);
 
-      // Text Hook superior
+      // Ganxo de text superior
       ctx.font = '800 58px sans-serif';
       ctx.fillStyle = '#ffffff';
       ctx.shadowBlur = 15;
@@ -254,6 +259,11 @@
     let recordedChunks = [];
 
     window.startRecording = function() {
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+
+      recordedChunks = [];
       const canvasStream = canvas.captureStream(60);
       const audioStream = audioDest.stream;
       const combined = new MediaStream([
@@ -261,9 +271,17 @@
         ...audioStream.getAudioTracks()
       ]);
 
+      // Selecció de còdec compatible amb el navegador
+      let mimeType = 'video/webm;codecs=vp8,opus';
+      if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')) {
+        mimeType = 'video/webm;codecs=vp9,opus';
+      } else if (MediaRecorder.isTypeSupported('video/webm')) {
+        mimeType = 'video/webm';
+      }
+
       mediaRecorder = new MediaRecorder(combined, {
-        mimeType: 'video/webm;codecs=vp9,opus',
-        videoBitsPerSecond: 8000000 // 8 Mbps d'alta qualitat
+        mimeType: mimeType,
+        videoBitsPerSecond: 8000000
       });
 
       mediaRecorder.ondataavailable = e => {
@@ -279,19 +297,22 @@
         a.download = 'simulation.webm';
         document.body.appendChild(a);
         a.click();
+        a.remove();
       };
 
       mediaRecorder.start();
       console.log('GRAVACIÓ INICIADA');
 
-      // Parada automàtica en arribar als segons establerts
+      // Finalització automàtica quan acaba la durada
       setTimeout(() => {
-        mediaRecorder.stop();
-        console.log('GRAVACIÓ FINALITZADA');
+        if (mediaRecorder.state !== 'inactive') {
+          mediaRecorder.stop();
+          console.log('GRAVACIÓ FINALITZADA');
+        }
       }, RECORD_DURATION * 1000);
     };
 
-    // Iniciar renderitzat
+    // Arrencar la simulació visual
     render();
   </script>
 </body>
