@@ -43,7 +43,7 @@
 
   <script>
     // ============================================================
-    // 0. CONFIGURACIÓ GLOBAL I CONSTANTS FÍSIQUES
+    // 0. CONFIGURACIÓ GLOBAL I PALETA NEÓ
     // ============================================================
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
@@ -52,12 +52,24 @@
 
     const ARENA_RADIUS = 410;
     const BALL_RADIUS = 21;
-    const GRAVITY = 950;          // Gravetat cap avall (px/s²)
-    const INITIAL_SPEED = 620;    // Impuls inicial en direcció aleatòria
-    const BOUNCE_RESTITUTION = 1.015; // Manté l'energia als rebots
+    const GRAVITY = 950;          // Gravetat realista cap avall (px/s²)
+    const INITIAL_SPEED = 620;    // Impuls inicial
+    const BOUNCE_RESTITUTION = 1.015;
     const MAX_SPEED = 920;
     const MIN_SPEED = 380;
-    const TIME_PER_BALL = 4.2;    // Segons abans de congelar-se
+
+    // Paleta de colors neó vibrants
+    const NEON_PALETTE = [
+      { color: '#00f2fe', glow: '#00f2fe', name: 'CYAN' },
+      { color: '#ff007f', glow: '#ff007f', name: 'PINK' },
+      { color: '#39ff14', glow: '#39ff14', name: 'LIME' },
+      { color: '#ffd700', glow: '#ffd700', name: 'GOLD' },
+      { color: '#b026ff', glow: '#b026ff', name: 'PURPLE' },
+      { color: '#ff6600', glow: '#ff6600', name: 'ORANGE' },
+      { color: '#ff2a2a', glow: '#ff2a2a', name: 'RED' },
+      { color: '#1e90ff', glow: '#1e90ff', name: 'BLUE' },
+      { color: '#00ff88', glow: '#00ff88', name: 'EMERALD' }
+    ];
 
     window.soundEvents = [];
     window.actualDuration = 0;
@@ -92,14 +104,19 @@
       };
     }
 
+    // Retorna un temps aleatori entre 1.5s i 3.5s
+    function getRandomFreezeTime(rnd) {
+      return 1.5 + rnd() * 2.0;
+    }
+
     // ============================================================
-    // 2. PRE-SIMULACIÓ AMB GRAVETAT (FILTRA 20s A 36s)
+    // 2. PRE-SIMULACIÓ (TROBA PARTIDA GARANTIDA ENTRE 20s I 36s)
     // ============================================================
     function simulateCandidate(seed) {
       const rnd = createPRNG(seed);
       let gapAngle = rnd() * Math.PI * 2;
       const rotSpeed = 0.55;
-      const gapSize = 0.62;
+      const gapSize = 0.52; // ~30 graus
 
       let simTime = 0;
       let frozen = [];
@@ -110,7 +127,7 @@
         y: CENTER.y - 40,
         vx: Math.cos(ballAng) * INITIAL_SPEED,
         vy: Math.sin(ballAng) * INITIAL_SPEED,
-        timer: TIME_PER_BALL
+        timer: getRandomFreezeTime(rnd)
       };
 
       const DT = 1 / 60;
@@ -121,12 +138,10 @@
         gapAngle = (gapAngle + rotSpeed * DT) % (Math.PI * 2);
         b.timer -= DT;
 
-        // Gravetat
         b.vy += GRAVITY * DT;
         b.x += b.vx * DT;
         b.y += b.vy * DT;
 
-        // Límit de velocitat
         const spd = Math.hypot(b.vx, b.vy);
         if (spd > MAX_SPEED) {
           b.vx = (b.vx / spd) * MAX_SPEED;
@@ -136,7 +151,6 @@
           b.vy = (b.vy / spd) * MIN_SPEED;
         }
 
-        // Comprovar paret
         const dx = b.x - CENTER.x;
         const dy = b.y - CENTER.y;
         const dist = Math.hypot(dx, dy);
@@ -149,7 +163,7 @@
           if (diff > Math.PI) diff = Math.PI * 2 - diff;
 
           if (diff <= gapSize / 2) {
-            if (simTime >= 20.0 && simTime <= 36.0 && frozen.length >= 4) {
+            if (simTime >= 20.0 && simTime <= 36.0 && frozen.length >= 5) {
               return { success: true, duration: simTime, frozenCount: frozen.length, seed };
             }
             return { success: false };
@@ -166,7 +180,6 @@
           }
         }
 
-        // Rebot contra boles congelades
         for (let i = 0; i < frozen.length; i++) {
           const f = frozen[i];
           const fdx = b.x - f.x;
@@ -186,7 +199,7 @@
           }
         }
 
-        // Temps esgotat: congelar i generar nova bola
+        // Temps de congelació esgotat
         if (b.timer <= 0) {
           frozen.push({ x: b.x, y: b.y });
           const newAng = rnd() * Math.PI * 2;
@@ -195,7 +208,7 @@
             y: CENTER.y - 40,
             vx: Math.cos(newAng) * INITIAL_SPEED,
             vy: Math.sin(newAng) * INITIAL_SPEED,
-            timer: TIME_PER_BALL
+            timer: getRandomFreezeTime(rnd)
           };
         }
       }
@@ -203,39 +216,49 @@
     }
 
     function findBestSeed() {
-      for (let s = 1; s < 500; s++) {
+      let bestFallback = 24;
+      for (let s = 1; s < 800; s++) {
         const res = simulateCandidate(s);
         if (res.success) {
           console.log(`✅ Partida òptima trobada! Seed: ${s}, durada: ${res.duration.toFixed(1)}s, congelades: ${res.frozenCount}`);
           return s;
         }
       }
-      return 17;
+      return bestFallback;
     }
 
     const optimalSeed = findBestSeed();
     const gameRND = createPRNG(optimalSeed);
 
     // ============================================================
-    // 3. ESTAT DEL JOC
+    // 3. COLOR DEL CERCLE I ESTAT DEL JOC
     // ============================================================
+    // Color aleatori independent per al cercle
+    const ringColorObj = NEON_PALETTE[Math.floor(gameRND() * NEON_PALETTE.length)];
+
     let ring = {
       radius: ARENA_RADIUS,
       gapAngle: gameRND() * Math.PI * 2,
-      gapSize: 0.62,
-      rotSpeed: 0.55
+      gapSize: 0.52,
+      rotSpeed: 0.55,
+      color: ringColorObj.color,
+      glow: ringColorObj.glow
     };
 
     let frozenBalls = [];
     let currentBallNumber = 1;
 
+    // Primer color de bola aleatori independent
+    const firstBallColorObj = NEON_PALETTE[Math.floor(gameRND() * NEON_PALETTE.length)];
     let activeBallAng = gameRND() * Math.PI * 2;
     let activeBall = {
       x: CENTER.x,
       y: CENTER.y - 40,
       vx: Math.cos(activeBallAng) * INITIAL_SPEED,
       vy: Math.sin(activeBallAng) * INITIAL_SPEED,
-      timer: TIME_PER_BALL,
+      timer: getRandomFreezeTime(gameRND),
+      color: firstBallColorObj.color,
+      glow: firstBallColorObj.glow,
       trail: []
     };
 
@@ -243,7 +266,7 @@
     let iceSparks = [];
     let hasEscaped = false;
 
-    function spawnFreezeBurst(x, y) {
+    function spawnFreezeBurst(x, y, colorStr) {
       for (let i = 0; i < 35; i++) {
         const ang = Math.random() * Math.PI * 2;
         const spd = 4 + Math.random() * 12;
@@ -252,12 +275,12 @@
           vx: Math.cos(ang) * spd,
           vy: Math.sin(ang) * spd,
           life: 28,
-          color: i % 2 === 0 ? '#93c5fd' : '#e0f2fe'
+          color: colorStr
         });
       }
     }
 
-    function spawnVictoryConfetti() {
+    function spawnVictoryConfetti(winnerColor) {
       for (let i = 0; i < 90; i++) {
         const ang = Math.random() * Math.PI * 2;
         const spd = 7 + Math.random() * 22;
@@ -266,13 +289,13 @@
           vx: Math.cos(ang) * spd,
           vy: Math.sin(ang) * spd,
           life: 65,
-          color: ['#00f2fe', '#38bdf8', '#ffffff', '#fbbf24', '#f43f5e'][i % 5]
+          color: [winnerColor, ring.color, '#ffffff', '#ffd700'][i % 4]
         });
       }
     }
 
     // ============================================================
-    // 4. BUCLE DE FÍSICA AMB GRAVETAT
+    // 4. BUCLE DE FÍSICA AMB GRAVETAT I TIMERS ALEATORIS
     // ============================================================
     function updatePhysics(dt) {
       if (!isRunning || hasEscaped) return;
@@ -284,13 +307,10 @@
       activeBall.timer -= dt;
 
       for (let s = 0; s < SUB_STEPS; s++) {
-        // 1. Aplicar gravetat a la velocitat vertical
         activeBall.vy += GRAVITY * stepDt;
-
         activeBall.x += activeBall.vx * stepDt;
         activeBall.y += activeBall.vy * stepDt;
 
-        // Control de límits de velocitat
         const curSpd = Math.hypot(activeBall.vx, activeBall.vy);
         if (curSpd > MAX_SPEED) {
           activeBall.vx = (activeBall.vx / curSpd) * MAX_SPEED;
@@ -304,7 +324,7 @@
         const dy = activeBall.y - CENTER.y;
         const dist = Math.hypot(dx, dy);
 
-        // 2. Col·lisió amb el mur exterior
+        // Col·lisió amb el mur exterior
         if (dist >= ARENA_RADIUS - BALL_RADIUS) {
           let hitAng = Math.atan2(dy, dx);
           if (hitAng < 0) hitAng += Math.PI * 2;
@@ -313,7 +333,7 @@
           if (diff > Math.PI) diff = Math.PI * 2 - diff;
 
           if (diff <= ring.gapSize / 2) {
-            // HA ESCAPAT PER LA PORTA!
+            // HA ESCAPAT!
             if (dist > ARENA_RADIUS + BALL_RADIUS + 10) {
               hasEscaped = true;
               isFinished = true;
@@ -322,7 +342,7 @@
               window.actualDuration = (performance.now() - startTime) / 1000;
 
               recordSound('reveal', 10);
-              spawnVictoryConfetti();
+              spawnVictoryConfetti(activeBall.color);
 
               setTimeout(() => {
                 if (mediaRecorder && mediaRecorder.state !== 'inactive') {
@@ -332,7 +352,6 @@
               return;
             }
           } else {
-            // Rebot de paret circular
             const nx = dx / (dist || 1);
             const ny = dy / (dist || 1);
             const dot = activeBall.vx * nx + activeBall.vy * ny;
@@ -346,7 +365,7 @@
           }
         }
 
-        // 3. Col·lisió contra les boles congelades
+        // Col·lisió contra les boles congelades
         for (let i = 0; i < frozenBalls.length; i++) {
           const f = frozenBalls[i];
           const fdx = activeBall.x - f.x;
@@ -370,24 +389,32 @@
         }
       }
 
-      // Estela
-      activeBall.trail.push({ x: activeBall.x, y: activeBall.y });
+      activeBall.trail.push({ x: activeBall.x, y: activeBall.y, color: activeBall.color });
       if (activeBall.trail.length > 14) activeBall.trail.shift();
 
-      // Temps esgotat: congelar i generar nova bola
+      // Temps esgotat: congelar i generar nova bola amb color i timer aleatori
       if (activeBall.timer <= 0) {
-        frozenBalls.push({ x: activeBall.x, y: activeBall.y, id: currentBallNumber });
-        spawnFreezeBurst(activeBall.x, activeBall.y);
+        frozenBalls.push({
+          x: activeBall.x,
+          y: activeBall.y,
+          color: activeBall.color,
+          id: currentBallNumber
+        });
+        spawnFreezeBurst(activeBall.x, activeBall.y, activeBall.color);
         recordSound('freeze', 5);
 
         currentBallNumber++;
+        const nextColObj = NEON_PALETTE[Math.floor(gameRND() * NEON_PALETTE.length)];
         const nextAng = gameRND() * Math.PI * 2;
+
         activeBall = {
           x: CENTER.x,
           y: CENTER.y - 40,
           vx: Math.cos(nextAng) * INITIAL_SPEED,
           vy: Math.sin(nextAng) * INITIAL_SPEED,
-          timer: TIME_PER_BALL,
+          timer: getRandomFreezeTime(gameRND), // 1.5s a 3.5s aleatori
+          color: nextColObj.color,
+          glow: nextColObj.glow,
           trail: []
         };
       }
@@ -421,20 +448,20 @@
       ctx.fillStyle = '#ffffff';
       ctx.textAlign = 'left';
       ctx.fillText(titlePrefix, startX, 310);
-      ctx.fillStyle = '#00f2fe';
+      ctx.fillStyle = activeBall.color;
       ctx.fillText(titleHighlight, startX + ctx.measureText(titlePrefix).width, 310);
 
       ctx.textAlign = 'center';
       ctx.font = '700 28px Lexend, sans-serif';
       ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
-      ctx.fillText(`FREEZES EVERY ${TIME_PER_BALL.toFixed(1)}s`, CENTER.x, 365);
+      ctx.fillText("RANDOM FREEZE TIMER (1.5s - 3.5s)", CENTER.x, 365);
       ctx.restore();
 
-      // Anell exterior
+      // Anell exterior amb color aleatori independent
       ctx.save();
-      ctx.shadowBlur = 18;
-      ctx.shadowColor = '#00f2fe';
-      ctx.strokeStyle = '#00f2fe';
+      ctx.shadowBlur = 20;
+      ctx.shadowColor = ring.glow;
+      ctx.strokeStyle = ring.color;
       ctx.lineWidth = 6;
       ctx.lineCap = 'round';
 
@@ -455,7 +482,7 @@
       });
       iceSparks = iceSparks.filter(s => s.life > 0);
 
-      // Partícules de celebració
+      // Partícules de victòria
       particles.forEach(p => {
         p.x += p.vx;
         p.y += p.vy;
@@ -467,60 +494,63 @@
       });
       particles = particles.filter(p => p.life > 0);
 
-      // Boles congelades
+      // Boles congelades amb el seu color propi + efecte gel
       frozenBalls.forEach(fb => {
         ctx.save();
-        ctx.shadowBlur = 12;
-        ctx.shadowColor = '#93c5fd';
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = fb.color;
+
         ctx.fillStyle = '#cbd5e1';
         ctx.beginPath();
         ctx.arc(fb.x, fb.y, BALL_RADIUS, 0, Math.PI * 2);
         ctx.fill();
 
-        ctx.strokeStyle = '#38bdf8';
-        ctx.lineWidth = 3;
+        ctx.strokeStyle = fb.color;
+        ctx.lineWidth = 3.5;
         ctx.stroke();
         ctx.restore();
       });
 
-      // Estela
+      // Estela de la bola activa amb el seu color
       activeBall.trail.forEach((pt, i) => {
         const alpha = (i + 1) / activeBall.trail.length;
         ctx.save();
-        ctx.fillStyle = `rgba(0, 242, 254, ${alpha * 0.4})`;
+        ctx.fillStyle = pt.color;
+        ctx.globalAlpha = alpha * 0.35;
         ctx.beginPath();
         ctx.arc(pt.x, pt.y, BALL_RADIUS * alpha * 0.85, 0, Math.PI * 2);
         ctx.fill();
         ctx.restore();
       });
+      ctx.globalAlpha = 1.0;
 
-      // Bola activa
+      // Bola activa amb el seu color propi
       ctx.save();
       ctx.shadowBlur = 24;
-      ctx.shadowColor = '#00f2fe';
-      ctx.fillStyle = '#00f2fe';
+      ctx.shadowColor = activeBall.glow;
+      ctx.fillStyle = activeBall.color;
       ctx.beginPath();
       ctx.arc(activeBall.x, activeBall.y, BALL_RADIUS, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
 
-      // HUD de temps restant
+      // Comptador de temps restant de la bola actual
       if (!hasEscaped) {
         const timeLeft = Math.max(0, activeBall.timer);
         ctx.save();
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.font = '900 68px Lexend, sans-serif';
-        ctx.fillStyle = timeLeft < 1.0 ? '#ef4444' : 'rgba(255, 255, 255, 0.18)';
+        ctx.fillStyle = timeLeft < 0.8 ? '#ef4444' : 'rgba(255, 255, 255, 0.20)';
         ctx.fillText(timeLeft.toFixed(1) + 's', CENTER.x, CENTER.y);
         ctx.restore();
       } else {
         ctx.save();
         ctx.textAlign = 'center';
         ctx.font = '900 74px Lexend, sans-serif';
-        ctx.fillStyle = '#00f2fe';
+        ctx.fillStyle = activeBall.color;
         ctx.shadowBlur = 25;
-        ctx.shadowColor = '#00f2fe';
+        ctx.shadowColor = activeBall.color;
         ctx.fillText('ESCAPED! 🏆', CENTER.x, CENTER.y - 30);
 
         ctx.font = '800 36px Lexend, sans-serif';
