@@ -24,9 +24,24 @@
       aspect-ratio: 9 / 16;
       box-shadow: 0 0 50px rgba(0, 0, 0, 0.95);
     }
+    /* Elements invisibles per forçar la descàrrega immediata de tots els pesos de Lexend */
+    .font-preload {
+      position: absolute;
+      left: -9999px;
+      visibility: hidden;
+      pointer-events: none;
+    }
+    .w700 { font-family: 'Lexend', sans-serif; font-weight: 700; }
+    .w800 { font-family: 'Lexend', sans-serif; font-weight: 800; }
+    .w900 { font-family: 'Lexend', sans-serif; font-weight: 900; }
   </style>
 </head>
 <body>
+  <!-- Precàrrega de fonts forçada -->
+  <div class="font-preload w700">Preload Lexend 700</div>
+  <div class="font-preload w800">Preload Lexend 800</div>
+  <div class="font-preload w900">Preload Lexend 900</div>
+
   <canvas id="canvas" width="1080" height="1920"></canvas>
 
   <script>
@@ -40,12 +55,12 @@
 
     const ARENA_RADIUS = 425;      // Línia blanca exterior
     const NUMBER_RADIUS = 355;     // Anell dels números 1..15
-    const BALL_REST_RADIUS = 275;  // Anell interior de repòs de les boles
+    const BALL_REST_RADIUS = 275;  // Anell interior on reposen les boles
     const BALL_RADIUS = 22;
     const NUM_BALLS = 15;
 
-    // Velocitats per a l'acceleració progressiva
-    const START_SPEED = 160;       // Velocitat inicial suau (px/s)
+    // Velocitats per a l'acceleració progressiva inicial
+    const START_SPEED = 160;       // Velocitat d'arrencada suau (px/s)
     const MAX_BALL_SPEED = 600;    // Velocitat màxima (px/s)
 
     const COLOR_BLUE = '#38bdf8';
@@ -131,7 +146,6 @@
       for (let s = 0; s < SUB_STEPS; s++) {
         // 1. Moure boles i rebotar contra la paret circular
         balls.forEach(ball => {
-          // Ajustar velocitat a l'acceleració actual
           const currentSpd = Math.hypot(ball.vx, ball.vy) || 1;
           ball.vx = (ball.vx / currentSpd) * currentTargetSpeed;
           ball.vy = (ball.vy / currentSpd) * currentTargetSpeed;
@@ -243,10 +257,10 @@
       ctx.fillStyle = '#000000';
       ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
-      // Títol amb font Lexend Bold
+      // Títol amb Lexend Bold (800)
       ctx.save();
       ctx.textAlign = 'center';
-      ctx.font = '800 52px "Lexend", sans-serif';
+      ctx.font = '800 52px Lexend, sans-serif';
       
       const titlePrefix = "Don't lose the ";
       const titleHighlight = "red ball";
@@ -260,8 +274,8 @@
       ctx.fillText(titleHighlight, startX + ctx.measureText(titlePrefix).width, 320);
       ctx.restore();
 
-      // Marca d'aigua inferior
-      ctx.font = '700 30px "Lexend", sans-serif';
+      // Marca d'aigua inferior amb Lexend Bold (700)
+      ctx.font = '700 30px Lexend, sans-serif';
       ctx.fillStyle = 'rgba(255, 255, 255, 0.22)';
       ctx.textAlign = 'center';
       ctx.fillText('@bouncelab.tv', CENTER.x, 1690);
@@ -284,34 +298,34 @@
             recordSound('tick', countdown);
           }
 
-          // Número gran al centre amb Lexend Black
+          // Número gran al centre amb Lexend Black (900)
           ctx.save();
           ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
-          ctx.font = '900 240px "Lexend", sans-serif';
+          ctx.font = '900 240px Lexend, sans-serif';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           ctx.fillText(countdown.toString(), CENTER.x, CENTER.y);
           ctx.restore();
 
-          // Números 1..15 entre les boles i la línia blanca
+          // Números 1..15 amb Lexend Bold (800)
           ctx.save();
           ctx.fillStyle = '#ffffff';
-          ctx.font = '800 32px "Lexend", sans-serif';
+          ctx.font = '800 32px Lexend, sans-serif';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           slots.forEach(s => ctx.fillText(s.number.toString(), s.textX, s.textY));
           ctx.restore();
 
-          // TEXT "FOLLOW THE RED BALL" FIX A BAIX DE TOT
+          // TEXT "FOLLOW THE RED BALL" AMB LEXEND BOLD (800) FIXAT A BAIX
           ctx.save();
           ctx.fillStyle = '#ffffff';
-          ctx.font = '800 28px "Lexend", sans-serif';
+          ctx.font = '800 32px Lexend, sans-serif';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           ctx.fillText('FOLLOW THE RED BALL', CENTER.x, 1450);
           ctx.restore();
 
-          // Fletxa assenyalant la bola vermella (només la fletxa)
+          // Fletxa assenyalant la bola vermella
           const targetBall = balls.find(b => b.isTarget);
           if (targetBall) {
             const dirX = Math.cos(slots[targetSlotIndex].angle);
@@ -350,10 +364,9 @@
             lastTickSecond = 16;
           }
 
-          // Càlcul de la velocitat progressiva durant els primers 3 segons (3s a 6s)
           let currentTargetSpeed = MAX_BALL_SPEED;
           if (elapsed < 6.0) {
-            const rampProgress = (elapsed - 3.0) / 3.0; // de 0.0 a 1.0
+            const rampProgress = (elapsed - 3.0) / 3.0;
             currentTargetSpeed = START_SPEED + (MAX_BALL_SPEED - START_SPEED) * rampProgress;
           }
 
@@ -365,7 +378,7 @@
 
           ctx.save();
           ctx.fillStyle = 'rgba(255, 255, 255, 0.13)';
-          ctx.font = '900 240px "Lexend", sans-serif';
+          ctx.font = '900 240px Lexend, sans-serif';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           ctx.fillText(timeLeft.toString(), CENTER.x, CENTER.y);
@@ -388,7 +401,6 @@
             b.y = b.startY + (b.targetSlot.y - b.startY) * eased;
           });
 
-          // Revelació seqüencial dels números 1..15 en sentit horari
           const numRevealProgress = Math.min(NUM_BALLS, Math.floor(((elapsed - 18.1) / 1.4) * NUM_BALLS));
           if (numRevealProgress > lastRevealedNumIndex && numRevealProgress > 0) {
             for (let k = lastRevealedNumIndex + 1; k <= numRevealProgress; k++) {
@@ -399,7 +411,7 @@
 
           ctx.save();
           ctx.fillStyle = '#ffffff';
-          ctx.font = '800 32px "Lexend", sans-serif';
+          ctx.font = '800 32px Lexend, sans-serif';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
 
@@ -412,7 +424,7 @@
           // FASE 4: REVELACIÓ GUANYADORA
           ctx.save();
           ctx.fillStyle = '#ffffff';
-          ctx.font = '800 32px "Lexend", sans-serif';
+          ctx.font = '800 32px Lexend, sans-serif';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           slots.forEach(s => ctx.fillText(s.number.toString(), s.textX, s.textY));
@@ -533,10 +545,23 @@
       }, 23000);
     };
 
-    // Assegurar que la font Lexend estigui llesta abans de renderitzar
-    document.fonts.ready.then(() => {
+    // Assegurar que totes les fonts Lexend estan completament descarregades abans de dibuixar
+    async function startApplication() {
+      try {
+        await Promise.all([
+          document.fonts.load('700 30px Lexend'),
+          document.fonts.load('800 32px Lexend'),
+          document.fonts.load('800 52px Lexend'),
+          document.fonts.load('900 240px Lexend')
+        ]);
+        await document.fonts.ready;
+      } catch (e) {
+        console.warn('Font loading fallback:', e);
+      }
       requestAnimationFrame(render);
-    });
+    }
+
+    startApplication();
   </script>
 </body>
 </html>
