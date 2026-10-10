@@ -4,36 +4,7 @@ on:
   schedule:
     # S'executa automàticament cada dia a les 10:00 UTC (12:00h peninsular)
     - cron: '0 10 * * *'
-  workflow_dispatch:
-    inputs:
-      duration:
-        description: 'Durada del vídeo en segons'
-        required: true
-        default: '30'
-        type: choice
-        options:
-          - '20'
-          - '30'
-          - '45'
-          - '60'
-      rings:
-        description: 'Nombre danells'
-        required: true
-        default: '7'
-        type: choice
-        options:
-          - '5'
-          - '6'
-          - '7'
-          - '8'
-      two_balls:
-        description: 'Dues pilotes enfrontades'
-        required: true
-        default: '1'
-        type: choice
-        options:
-          - '1' # Sí (Cyan vs Pink)
-          - '0' # No (1 sola pilota)
+  workflow_dispatch: # Permet executar-lo manualment amb un sol clic
 
 jobs:
   render_and_send:
@@ -58,11 +29,8 @@ jobs:
       - name: Instal·lar navegador Firefox per Playwright
         run: playwright install --with-deps firefox
 
-      - name: Generar vídeo i enviar a Telegram
+      - name: Generar vídeo dinàmic i enviar a Telegram
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          DURATION: ${{ github.event.inputs.duration || '30' }}
-          RINGS: ${{ github.event.inputs.rings || '7' }}
-          TWO_BALLS: ${{ github.event.inputs.two_balls || '1' }}
         run: python main.py
