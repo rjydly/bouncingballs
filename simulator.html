@@ -29,19 +29,16 @@
     // ==========================================
     // 0. CONFIGURACIÓ GENERAL
     // ==========================================
-    const urlParams = new URLSearchParams(window.location.search);
-    const RECORD_DURATION = parseInt(urlParams.get('duration') || '30', 10);
-    const RING_COUNT = parseInt(urlParams.get('rings') || '7', 10);
-    const TWO_BALLS = urlParams.get('twoBalls') !== '0'; // Per defecte: Dues pilotes
-
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
     const WIDTH = 1080, HEIGHT = 1920;
     const CENTER = { x: WIDTH / 2, y: HEIGHT / 2 };
 
     window.soundEvents = [];
+    window.actualDuration = 0;
     let startTime = null;
     let globalFrame = 0;
+    let isFinished = false;
 
     function recordSoundHit(noteIndex, isEscape) {
       if (startTime !== null) {
@@ -55,57 +52,61 @@
     }
 
     // ==========================================
-    // 1. CONFIGURACIÓ DE LES PILOTES
+    // 1. FÍSICA RÀPIDA I ASIMÈTRICA (NATURAL)
     // ==========================================
-    const GRAVITY = 0.58;
-    const BOUNCE_ACCEL = 1.016;
-    const MAX_SPEED = 38;
+    const GRAVITY = 0.78;          // Gravetat enèrgica (trajectòries naturals)
+    const BOUNCE_ACCEL = 1.012;
+    const MAX_SPEED = 48;
     const BALL_RADIUS = 18;
+
+    // Generació d'angles i velocitats 100% aleatoris per evitar simetria
+    const angle1 = Math.random() * Math.PI * 2;
+    const speed1 = 28 + Math.random() * 6;
+    const angle2 = (angle1 + Math.PI * 0.4 + Math.random() * Math.PI * 0.8) % (Math.PI * 2);
+    const speed2 = 28 + Math.random() * 6;
 
     let balls = [
       {
         id: 1,
         name: "CYAN",
-        x: CENTER.x - 45,
-        y: CENTER.y - 60,
-        vx: 16,
-        vy: -14,
+        x: CENTER.x - 30 + (Math.random() - 0.5) * 60,
+        y: CENTER.y - 40 + (Math.random() - 0.5) * 60,
+        vx: Math.cos(angle1) * speed1,
+        vy: Math.sin(angle1) * speed1,
         radius: BALL_RADIUS,
         color: '#00f2fe',
         glowColor: '#00f2fe',
         hueOffset: 0,
         trail: []
-      }
-    ];
-
-    if (TWO_BALLS) {
-      balls.push({
+      },
+      {
         id: 2,
         name: "PINK",
-        x: CENTER.x + 45,
-        y: CENTER.y - 60,
-        vx: -16,
-        vy: -14,
+        x: CENTER.x + 30 + (Math.random() - 0.5) * 60,
+        y: CENTER.y - 40 + (Math.random() - 0.5) * 60,
+        vx: Math.cos(angle2) * speed2,
+        vy: Math.sin(angle2) * speed2,
         radius: BALL_RADIUS,
         color: '#ff007f',
         glowColor: '#ff007f',
-        hueOffset: 180, // Colors oposats a l'arc de Sant Martí
+        hueOffset: 180,
         trail: []
-      });
-    }
+      }
+    ];
 
-    // 7 Anells concèntrics
-    const BASE_RADIUS = 150;
-    const SPACING = 54;
+    // 4 ANELLS AMB OBERTURA LLEUGERAMENT MÉS ÀMPLIA PER A JOC DINÀMIC
+    const RING_COUNT = 4;
+    const BASE_RADIUS = 160;
+    const SPACING = 68;
     let rings = [];
 
     for (let i = 0; i < RING_COUNT; i++) {
-      const hue = (i * 48 + 15) % 360;
+      const hue = (i * 65 + 20) % 360;
       rings.push({
         radius: BASE_RADIUS + i * SPACING,
         gapAngle: Math.random() * Math.PI * 2,
-        gapSize: 0.65, // Obertura de ~37 graus
-        speed: (Math.random() > 0.5 ? 1 : -1) * (0.022 + i * 0.005),
+        gapSize: 0.78, // Obertura dinàmica (~45 graus)
+        speed: (Math.random() > 0.5 ? 1 : -1) * (0.028 + i * 0.007),
         hue: hue,
         color: `hsl(${hue}, 100%, 65%)`,
         alive: true,
@@ -118,26 +119,26 @@
     function spawnBurst(x, y, hue) {
       for (let i = 0; i < 45; i++) {
         const ang = Math.random() * Math.PI * 2;
-        const spd = 6 + Math.random() * 14;
+        const spd = 8 + Math.random() * 16;
         particles.push({
           x, y,
           vx: Math.cos(ang) * spd,
           vy: Math.sin(ang) * spd,
-          life: 35,
+          life: 40,
           color: `hsl(${hue}, 100%, 75%)`
         });
       }
     }
 
     // ==========================================
-    // 2. FÍSICA I DETECCIÓ DE COL·LISIÓ
+    // 2. MOTOR DE COL·LISIÓ SENSE TUNNELING
     // ==========================================
     function updatePhysics() {
       const SUB_STEPS = 8;
       globalFrame++;
 
       for (let s = 0; s < SUB_STEPS; s++) {
-        // 1. Moure cada pilota
+        // Moviment de cada pilota
         balls.forEach(ball => {
           ball.vy += GRAVITY / SUB_STEPS;
           ball.x += ball.vx / SUB_STEPS;
@@ -159,7 +160,7 @@
           let hitAngle = Math.atan2(dy, dx);
           if (hitAngle < 0) hitAngle += Math.PI * 2;
 
-          // Col·lisió amb anells
+          // Col·lisió amb els 4 anells
           rings.forEach((ring, idx) => {
             if (!ring.alive) return;
 
@@ -201,40 +202,38 @@
           });
         });
 
-        // 2. Col·lisió elàstica entre les dues pilotes si xoquen
-        if (balls.length === 2) {
-          const b1 = balls[0], b2 = balls[1];
-          const cdx = b2.x - b1.x;
-          const cdy = b2.y - b1.y;
-          const cDist = Math.hypot(cdx, cdy);
-          const minDist = b1.radius + b2.radius;
+        // Xoc elàstic entre les dues boles
+        const b1 = balls[0], b2 = balls[1];
+        const cdx = b2.x - b1.x;
+        const cdy = b2.y - b1.y;
+        const cDist = Math.hypot(cdx, cdy);
+        const minDist = b1.radius + b2.radius;
 
-          if (cDist < minDist && cDist > 0) {
-            const cnx = cdx / cDist;
-            const cny = cdy / cDist;
-            const rvx = b1.vx - b2.vx;
-            const rvy = b1.vy - b2.vy;
-            const velAlongNorm = rvx * cnx + rvy * cny;
+        if (cDist < minDist && cDist > 0) {
+          const cnx = cdx / cDist;
+          const cny = cdy / cDist;
+          const rvx = b1.vx - b2.vx;
+          const rvy = b1.vy - b2.vy;
+          const velAlongNorm = rvx * cnx + rvy * cny;
 
-            if (velAlongNorm > 0) {
-              b1.vx -= velAlongNorm * cnx;
-              b1.vy -= velAlongNorm * cny;
-              b2.vx += velAlongNorm * cnx;
-              b2.vy += velAlongNorm * cny;
+          if (velAlongNorm > 0) {
+            b1.vx -= velAlongNorm * cnx;
+            b1.vy -= velAlongNorm * cny;
+            b2.vx += velAlongNorm * cnx;
+            b2.vy += velAlongNorm * cny;
 
-              const sep = (minDist - cDist) / 2;
-              b1.x -= cnx * sep;
-              b1.y -= cny * sep;
-              b2.x += cnx * sep;
-              b2.y += cny * sep;
+            const sep = (minDist - cDist) / 2;
+            b1.x -= cnx * sep;
+            b1.y -= cny * sep;
+            b2.x += cnx * sep;
+            b2.y += cny * sep;
 
-              recordSoundHit(9, false); // So agut en xocar entre elles
-            }
+            recordSoundHit(9, false);
           }
         }
       }
 
-      // 3. Rotació d'anells
+      // Rotació dels anells
       rings.forEach(r => {
         if (r.alive) {
           r.gapAngle = (r.gapAngle + r.speed) % (Math.PI * 2);
@@ -242,31 +241,44 @@
         }
       });
 
-      // 4. Afegir punt a l'Estela Multicolor (Rainbow Trail)
+      // Estela multicolor
       balls.forEach(ball => {
-        const curHue = (globalFrame * 4 + ball.hueOffset) % 360;
+        const curHue = (globalFrame * 5 + ball.hueOffset) % 360;
         ball.trail.push({ x: ball.x, y: ball.y, hue: curHue });
-        if (ball.trail.length > 22) ball.trail.shift();
+        if (ball.trail.length > 20) ball.trail.shift();
       });
+
+      // CONDICIÓ DE FINAL: Han escapat tots els anells?
+      const allRingsCleared = rings.every(r => !r.alive);
+      if (allRingsCleared && !isFinished) {
+        isFinished = true;
+        // Donem 1.5 segons de celebració final abans de tallar el vídeo
+        setTimeout(() => {
+          if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+            window.actualDuration = (performance.now() - startTime) / 1000;
+            mediaRecorder.stop();
+          }
+        }, 1500);
+      }
     }
 
     // ==========================================
-    // 3. RENDERITZAT VISUAL NEÓ + RAINBOW
+    // 3. RENDERITZAT VISUAL
     // ==========================================
     function render() {
       ctx.fillStyle = '#030712';
       ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
-      // Dibuixar Anells Neó
+      // Anells Neó
       rings.forEach(ring => {
         if (!ring.alive) return;
         ctx.save();
 
-        const glowSize = ring.flash > 0 ? 30 : 15;
+        const glowSize = ring.flash > 0 ? 32 : 16;
         ctx.shadowBlur = glowSize;
         ctx.shadowColor = ring.flash > 0 ? '#ffffff' : ring.color;
         ctx.strokeStyle = ring.flash > 0 ? '#ffffff' : ring.color;
-        ctx.lineWidth = ring.flash > 0 ? 12 : 9;
+        ctx.lineWidth = ring.flash > 0 ? 13 : 9;
         ctx.lineCap = 'round';
 
         ctx.beginPath();
@@ -277,7 +289,7 @@
         ctx.restore();
       });
 
-      // Dibuixar Esteles d'Arc de Sant Martí (Rainbow Trail)
+      // Esteles Rainbow
       balls.forEach(ball => {
         ball.trail.forEach((pt, i) => {
           const alpha = (i + 1) / ball.trail.length;
@@ -304,7 +316,7 @@
       });
       particles = particles.filter(p => p.life > 0);
 
-      // Dibuixar Pilotes amb resplendor
+      // Pilotes Neó
       balls.forEach(ball => {
         ctx.save();
         ctx.shadowBlur = 25;
@@ -322,25 +334,26 @@
       ctx.textAlign = 'center';
       ctx.fillText('bouncelab.tv', CENTER.x, CENTER.y + 12);
 
-      // Ganxo de text de tensió viral
-      ctx.font = '800 60px sans-serif';
+      // Ganxo de text viral
+      ctx.font = '800 62px sans-serif';
       ctx.fillStyle = '#ffffff';
       ctx.shadowBlur = 18;
       ctx.shadowColor = 'rgba(255, 255, 255, 0.6)';
       ctx.textAlign = 'center';
 
-      if (balls.length === 2) {
+      if (isFinished) {
+        ctx.fillStyle = '#93d119';
+        ctx.shadowColor = '#93d119';
+        ctx.fillText('ESCAPED! 🏆', CENTER.x, 240);
+      } else {
         ctx.fillText('WHICH ONE ESCAPES?', CENTER.x, 240);
-        // Indicador de colors Cyan vs Pink
         ctx.font = '700 32px sans-serif';
         ctx.fillStyle = '#00f2fe';
-        ctx.fillText('CYAN', CENTER.x - 110, 290);
+        ctx.fillText('CYAN', CENTER.x - 110, 292);
         ctx.fillStyle = '#ffffff';
-        ctx.fillText('vs', CENTER.x, 290);
+        ctx.fillText('vs', CENTER.x, 292);
         ctx.fillStyle = '#ff007f';
-        ctx.fillText('PINK', CENTER.x + 110, 290);
-      } else {
-        ctx.fillText('WILL IT ESCAPE?', CENTER.x, 260);
+        ctx.fillText('PINK', CENTER.x + 110, 292);
       }
 
       // Comptador d'anells restants inferior
@@ -355,7 +368,7 @@
     }
 
     // ==========================================
-    // 4. GRAVADOR INTEGRAT
+    // 4. GRAVADOR INTEGRAT (Auto-stop en escapar)
     // ==========================================
     let mediaRecorder;
     let recordedChunks = [];
@@ -397,11 +410,13 @@
 
       mediaRecorder.start();
 
+      // Límit de seguretat de 60 segons per si triguen molt
       setTimeout(() => {
         if (mediaRecorder.state !== 'inactive') {
+          window.actualDuration = (performance.now() - startTime) / 1000;
           mediaRecorder.stop();
         }
-      }, RECORD_DURATION * 1000);
+      }, 60000);
     };
 
     render();
