@@ -10,6 +10,18 @@ import numpy as np
 from playwright.sync_api import sync_playwright
 import requests
 
+# ==============================================================================
+# ⚙️ PANELL DE CONTROL PRINCIPAL
+# ==============================================================================
+# True  -> Mode de proves: s'executa el mode definit a SELECTED_MODE i s'envia a Telegram.
+# False -> Mode producció: [Per a més endavant] farà la roda de vídeos per ordre i publicarà a Buffer.
+MODE_PROVA = True
+
+# Quin tipus de vídeo vols provar ara mateix (nom del fitxer a la carpeta simulators/):
+# Exemples: "classic", "lines", "paint", "grow", "shatter"
+SELECTED_MODE = "classic"
+# ==============================================================================
+
 PORT = 8080
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
@@ -25,6 +37,7 @@ def start_local_server():
     print(f"Servidor web local actiu a http://localhost:{PORT}")
 
 
+# Carrega un mem aleatori d'assets/audio/ si n'hi ha cap
 def load_random_meme_sound():
     valid_exts = (".mp3", ".wav", ".ogg", ".m4a")
     if not os.path.exists(ASSETS_AUDIO_DIR):
@@ -152,6 +165,24 @@ def synthesize_soundtrack(
 
 def run():
     start_local_server()
+
+    # Gestió de modes segons si estem en mode prova o producció
+    if MODE_PROVA:
+        active_mode = SELECTED_MODE
+        print(f"🧪 [MODE PROVA ACTIVAT] Generant mode '{active_mode}'...")
+    else:
+        # En el futur, aquí gestionarem la rotació automàtica
+        active_mode = SELECTED_MODE
+        print(f"🚀 [MODE PRODUCCIÓ ACTIVAT] Generant mode '{active_mode}'...")
+
+    # Comprova la ruta del fitxer HTML (simulators/{mode}.html o fallback {mode}.html)
+    if os.path.exists(os.path.join("simulators", f"{active_mode}.html")):
+        sim_url = f"http://localhost:{PORT}/simulators/{active_mode}.html"
+    elif os.path.exists(f"{active_mode}.html"):
+        sim_url = f"http://localhost:{PORT}/{active_mode}.html"
+    else:
+        sim_url = f"http://localhost:{PORT}/simulator.html"
+
     meme_audio, meme_name = load_random_meme_sound()
 
     with sync_playwright() as p:
@@ -165,12 +196,11 @@ def run():
 
         page = context.new_page()
 
-        sim_url = f"http://localhost:{PORT}/simulator.html"
-        print("Carregant simulador i resolent pre-simulació...")
+        print(f"Carregant simulador ({sim_url})...")
         page.goto(sim_url, wait_until="load")
         page.wait_for_timeout(1000)
 
-        # Llegir configuració generada
+        # Extreure informació de la partida si el simulador la proporciona
         col1 = page.evaluate("window.color1Name || 'PILOTA 1'")
         col2 = page.evaluate("window.color2Name || 'PILOTA 2'")
         rings_cnt = page.evaluate("window.ringCount || 4")
@@ -178,9 +208,9 @@ def run():
 
         raw_video = "raw_simulation.webm"
 
-        # Timeout de 120 segons per permetre partides de fins a 1.5 minuts sense talls
+        # Gravació reactiva fins que finalitzi la partida
         with page.expect_download(timeout=120000) as download_info:
-            print("Iniciant duel i gravació...")
+            print("Iniciant partida i gravació...")
             page.evaluate("window.startRecording()")
 
         sound_events = page.evaluate("window.soundEvents || []")
@@ -190,13 +220,15 @@ def run():
         download = download_info.value
         download.save_as(raw_video)
         print(
-            f"Duel completat! Guanyador: {winner_name} en {actual_duration:.1f}s."
+            f"Partida completada! Guanyador: {winner_name} en {actual_duration:.1f}s."
         )
         browser.close()
 
+    # Generació d'àudio
     audio_file = "simulation_audio.wav"
     synthesize_soundtrack(sound_events, actual_duration, meme_audio, audio_file)
 
+    # Empaquetat MP4 vertical
     final_mp4 = "bouncelab_video.mp4"
     print("Empaquetant MP4 final amb FFmpeg...")
     subprocess.run(
@@ -230,33 +262,37 @@ def run():
         if os.path.exists(tmp):
             os.remove(tmp)
 
-    # Enviar a Telegram amb tots els detalls
-    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID and os.path.exists(final_mp4):
-        print("Enviant el vídeo per Telegram...")
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVideo"
-        meme_caption = f"\n🔊 So mem: {meme_name}" if meme_name else ""
-        caption_text = (
-            f"🎬 Duel: {col1} vs {col2} ({rings_cnt} anells)!\n"
-            f"🏆 Guanyador: {winner_name}!\n"
-            f"⏱️ Durada: {actual_duration:.1f}s{meme_caption}\n"
-            f"Canal: @bouncelab.tv 🔥"
-        )
-
-        with open(final_mp4, "rb") as f:
-            res = requests.post(
-                url,
-                data={
-                    "chat_id": TELEGRAM_CHAT_ID,
-                    "caption": caption_text,
-                    "supports_streaming": True,
-                },
-                files={"video": f},
-                timeout=240,
+    # Enviament segons el mode
+    if MODE_PROVA:
+        if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID and os.path.exists(final_mp4):
+            print("Enviant el vídeo de prova per Telegram...")
+            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVideo"
+            meme_caption = f"\n🔊 So mem: {meme_name}" if meme_name else ""
+            caption_text = (
+                f"🧪 [MODE PROVA: {active_mode.upper()}]\n"
+                f"🎬 Duel: {col1} vs {col2} ({rings_cnt} anells)!\n"
+                f"🏆 Guanyador: {winner_name}!\n"
+                f"⏱️ Durada: {actual_duration:.1f}s{meme_caption}\n"
+                f"Canal: @bouncelab.tv 🔥"
             )
-            if res.status_code == 200:
-                print("🎉 VÍDEO ENVIAT AMB ÈXIT A TELEGRAM!")
-            else:
-                print(f"Error Telegram: {res.text}")
+
+            with open(final_mp4, "rb") as f:
+                res = requests.post(
+                    url,
+                    data={
+                        "chat_id": TELEGRAM_CHAT_ID,
+                        "caption": caption_text,
+                        "supports_streaming": True,
+                    },
+                    files={"video": f},
+                    timeout=240,
+                )
+                if res.status_code == 200:
+                    print("🎉 VÍDEO ENVIAT AMB ÈXIT A TELEGRAM!")
+                else:
+                    print(f"Error Telegram: {res.text}")
+    else:
+        print("📢 Mode producció: Aquí connectarem la pujada automàtica a Buffer / xarxes socials.")
 
 
 if __name__ == "__main__":
