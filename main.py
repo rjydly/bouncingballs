@@ -55,10 +55,10 @@ def start_local_server():
     print(f"Servidor web local actiu a http://localhost:{PORT}")
 
 
-# Generador de veu en off amb volum màxim garantit
+# Generador de veu en off amb volum màxim
 async def _async_generate_voice(text, output_mp3):
     communicate = edge_tts.Communicate(
-        text, voice="en-US-ChristopherNeural", rate="+8%", volume="+25%"
+        text, voice="en-US-ChristopherNeural", rate="+8%", volume="+30%"
     )
     await communicate.save(output_mp3)
 
@@ -97,7 +97,7 @@ def generate_tts_intro():
                 np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
             )
 
-        # Normalització de la veu al 100% de potència
+        # Normalització prèvia de la veu al 100%
         max_v = np.max(np.abs(tts_audio))
         if max_v > 0:
             tts_audio = tts_audio / max_v
@@ -186,18 +186,18 @@ def synthesize_soundtrack(
         1046.50,
     ]
 
-    # 1. Finestra de la veu (per fer DUCKING i abaixar la marimba mentre parla)
+    # Finestra temporal de la veu (Ducking)
     tts_start_sample = int(0.20 * SAMPLE_RATE)
     tts_end_sample = 0
 
     if tts_audio is not None and len(tts_audio) > 0:
         n_tts = min(len(tts_audio), total_samples - tts_start_sample)
-        tts_end_sample = tts_start_sample + n_tts + int(0.3 * SAMPLE_RATE)
+        tts_end_sample = tts_start_sample + n_tts + int(0.35 * SAMPLE_RATE)
         audio_data[tts_start_sample : tts_start_sample + n_tts] += (
-            tts_audio[:n_tts] * 2.2
+            tts_audio[:n_tts] * 2.5
         )
 
-    # 2. Inserir notes i mems
+    # Inserció de notes i mems
     for ev in sound_events:
         t_sec = ev.get("time", 0)
         note_idx = ev.get("note", 0)
@@ -207,7 +207,7 @@ def synthesize_soundtrack(
         if start_sample >= total_samples:
             continue
 
-        # Si el so coincideix amb la veu, s'atenua un 75% perquè la veu ressoni al màxim
+        # Ducking: s'atenua un 75% mentre la veu parla
         is_during_tts = tts_start_sample <= start_sample <= tts_end_sample
         duck_factor = 0.25 if is_during_tts else 1.0
 
@@ -242,9 +242,9 @@ def synthesize_soundtrack(
 
     max_amp = np.max(np.abs(audio_data))
     if max_amp > 0:
-        audio_int16 = (audio_data / max_amp * 31000).astype(np.int16)
+        audio_int16 = (audio_data / max_amp * 31500).astype(np.int16)
     else:
-        audio_int16 = (audio_data * 31000).astype(np.int16)
+        audio_int16 = (audio_data * 31500).astype(np.int16)
 
     with wave.open(output_wav, "w") as wf:
         wf.setnchannels(1)
@@ -293,7 +293,9 @@ def run():
         raw_video = "raw_simulation.webm"
 
         with page.expect_download(timeout=120000) as download_info:
-            print("Iniciant enregistrament de la batalla (garantida > 22s)...")
+            print(
+                "Iniciant enregistrament de la batalla (garantida > 20s)..."
+            )
             page.evaluate("window.startRecording()")
 
         sound_events = page.evaluate("window.soundEvents || []")
@@ -313,7 +315,8 @@ def run():
     )
 
     final_mp4 = "bouncelab_video.mp4"
-    print("Empaquetant MP4 final amb FFmpeg...")
+    print("Empaquetant MP4 a 30 FPS amb compressió CRF 26...")
+    # 30 FPS + CRF 26 = MÀXIMA QUALITAT AMB PES < 20 MB (NO MÉS ERROR 413)
     subprocess.run(
         [
             "ffmpeg",
@@ -327,23 +330,26 @@ def run():
             "-preset",
             "fast",
             "-r",
-            "60",
+            "30",
             "-vsync",
             "cfr",
             "-pix_fmt",
             "yuv420p",
             "-crf",
-            "20",
+            "26",
             "-c:a",
             "aac",
             "-b:a",
-            "192k",
+            "128k",
             "-shortest",
             final_mp4,
         ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+
+    file_size_mb = os.path.getsize(final_mp4) / (1024 * 1024)
+    print(f"📦 Mida final del vídeo: {file_size_mb:.2f} MB (límit Telegram: 50 MB)")
 
     for tmp in [raw_video, audio_file]:
         if os.path.exists(tmp):
@@ -359,6 +365,7 @@ def run():
             f"🔥 {total_fighters} boles enfrontades!\n"
             f"🏆 Guanyador: {winner_name}!\n"
             f"⏱️ Durada: {actual_duration:.1f}s{meme_caption}\n"
+            f"📦 Pes: {file_size_mb:.1f} MB\n"
             f"Canal: @bouncelab.tv 🚀"
         )
 
