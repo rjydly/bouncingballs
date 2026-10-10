@@ -6,16 +6,13 @@ import threading
 from playwright.sync_api import sync_playwright
 import requests
 
-# Eliminar la variable conflictiva de D-Bus de Linux perquè no faci petar Chromium
-os.environ.pop("DBUS_SESSION_BUS_ADDRESS", None)
-
 PORT = 8080
-DURATION = 18  # Segons de vídeo
+DURATION = 18  # Segons de gravació
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 
-# 1. Servidor local per servir simulator.html
+# 1. Servidor local per a simulator.html
 def start_local_server():
     handler = http.server.SimpleHTTPRequestHandler
     httpd = socketserver.TCPServer(("", PORT), handler)
@@ -29,20 +26,9 @@ def run():
     start_local_server()
 
     with sync_playwright() as p:
-        print("Iniciant Chromium...")
-        browser = p.chromium.launch(
-            headless=True,
-            args=[
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--no-zygote",
-                "--single-process",
-                "--autoplay-policy=no-user-gesture",
-                "--use-fake-ui-for-media-stream",
-            ],
-        )
+        print("Iniciant Firefox en mode headless...")
+        # Firefox no té els errors de GPU ni DBus que té Chromium a Linux
+        browser = p.firefox.launch(headless=True)
 
         context = browser.new_context(
             viewport={"width": 1080, "height": 1920},
@@ -56,25 +42,24 @@ def run():
             f"http://localhost:{PORT}/simulator.html?duration={DURATION}",
             wait_until="load",
         )
-        page.wait_for_timeout(1000)
+        page.wait_for_timeout(1500)
 
         raw_video = "raw_simulation.webm"
 
-        # Esperem que el botó de descàrrega intern de simulator.html s'activi
+        # Esperem que es completi la descàrrega
         with page.expect_download(timeout=120000) as download_info:
             print("Iniciant gravació a simulator.html...")
             page.evaluate("window.startRecording()")
-            # Esperem que acabi de gravar
             page.wait_for_timeout((DURATION + 3) * 1000)
 
         download = download_info.value
         download.save_as(raw_video)
-        print("Gravació completada i descarregada amb èxit!")
+        print("Gravació WebM descarregada amb èxit!")
         browser.close()
 
-    # 2. Conversió a MP4 d'alta definició per a mòbil
+    # 2. Convertir el WebM a MP4 d'alta qualitat amb FFmpeg
     final_mp4 = "bouncelab_video.mp4"
-    print("Convertint a MP4 amb FFmpeg...")
+    print("Convertint a MP4 per a mòbils...")
     subprocess.run(
         [
             "ffmpeg",
@@ -102,9 +87,9 @@ def run():
     if os.path.exists(raw_video):
         os.remove(raw_video)
 
-    # 3. Enviar el vídeo resultant a Telegram
+    # 3. Enviar el vídeo per Telegram
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID and os.path.exists(final_mp4):
-        print("Enviant vídeo per Telegram...")
+        print("Enviant el vídeo final per Telegram...")
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVideo"
         with open(final_mp4, "rb") as f:
             res = requests.post(
@@ -118,11 +103,11 @@ def run():
                 timeout=120,
             )
             if res.status_code == 200:
-                print("🎉 Vídeo enviat amb èxit a Telegram!")
+                print("🎉 VÍDEO ENVIAT AMB ÈXIT A TELEGRAM!")
             else:
                 print(f"Error Telegram: {res.text}")
     else:
-        print("Error: secrets de Telegram buits o arxiu no trobat.")
+        print("Error: secrets buits o el fitxer MP4 no s'ha generat.")
 
 
 if __name__ == "__main__":
