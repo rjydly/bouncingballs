@@ -162,7 +162,7 @@ def synthesize_soundtrack(
     total_samples = int((duration_sec + 1.5) * SAMPLE_RATE)
     audio_data = np.zeros(total_samples, dtype=np.float32)
 
-    # Inserció de veu en off inicial amb ducking
+    # Veu inicial
     tts_start_sample = int(0.15 * SAMPLE_RATE)
     tts_end_sample = 0
     if tts_audio is not None and len(tts_audio) > 0:
@@ -190,7 +190,6 @@ def synthesize_soundtrack(
                 meme_audio[:n_samples] * 0.95
             )
         elif is_reveal:
-            # Acord brillant de celebració per defecte
             note_len = 1.2
             n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
             t = np.linspace(0, note_len, n_samples, False)
@@ -202,14 +201,12 @@ def synthesize_soundtrack(
             ) * np.exp(-3.5 * t)
             audio_data[start_sample : start_sample + n_samples] += chord
         elif ev_type == "pop":
-            # Clic rítmic agut per a cada número del 1 al 15 que apareix
             note_len = 0.04
             n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
             t = np.linspace(0, note_len, n_samples, False)
             pop = np.sin(2 * np.pi * 1800 * t) * np.exp(-90 * t)
             audio_data[start_sample : start_sample + n_samples] += pop * 0.40
         else:
-            # Tic rítmic de compte enrere
             note_len = 0.05
             n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
             t = np.linspace(0, note_len, n_samples, False)
