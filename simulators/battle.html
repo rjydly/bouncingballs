@@ -35,7 +35,7 @@
     const CENTER = { x: WIDTH / 2, y: HEIGHT / 2 };
     const ARENA_RADIUS = 465;
 
-    // LÍMITS DE DURADA GARANTITS: Entre 18s i 75s
+    // LÍMITS DE DURADA (18s a 75s)
     const MIN_DURATION = 18;
     const MAX_DURATION = 75;
 
@@ -79,10 +79,11 @@
     ];
 
     // ==========================================
-    // 2. FÍSICA SUPER LENTA A L'INICI
+    // 2. FÍSICA ZERO-GRAVITY (EVITA ENCALLAR-SE A BAIX)
     // ==========================================
-    const GRAVITY = 0.15;                  // Gravetat molt suau perquè planin a baixa velocitat
-    const INDIVIDUAL_BOUNCE_ACCEL = 1.032; // +3.2% a cada rebot de paret per accelerar gradualment
+    const GRAVITY = 0.0;                   // Gravetat 0: les boles volen per tot el cercle en 360°
+    const MIN_SPEED = 7.5;                 // Velocitat mínima garantida (mai s'adormen)
+    const INDIVIDUAL_BOUNCE_ACCEL = 1.028; // +2.8% a cada rebot de paret
     const MAX_SPEED = 44;
     const BALL_RADIUS = 20;
 
@@ -113,9 +114,9 @@
         const bx = CENTER.x + Math.cos(midAngle) * spawnDist;
         const by = CENTER.y + Math.sin(midAngle) * spawnDist;
 
-        // VELOCITAT INICIAL MOLT MÉS LENTA (4.0 a 5.5 px/fotograma)
+        // Velocitat inicial calmada i en totes direccions
         const moveAngle = Math.random() * Math.PI * 2;
-        const initialSpeed = 4.2 + Math.random() * 1.4;
+        const initialSpeed = 7.5 + Math.random() * 1.5;
 
         const lines = [];
         for (let a = 0; a < anchorsPerBall; a++) {
@@ -147,7 +148,7 @@
     }
 
     // ==========================================
-    // 3. PRE-SIMULACIÓ (18s - 75s)
+    // 3. PRE-SIMULACIÓ (FILTRE 18s - 75s)
     // ==========================================
     function simulateBattle(setup, maxAllowedSec) {
       const testBalls = setup.balls.map(b => ({
@@ -169,12 +170,11 @@
         frame++;
 
         for (let s = 0; s < SUB_STEPS; s++) {
-          // 1. Moure boles
+          // 1. Moure boles (zero gravity)
           for (let b = 0; b < testBalls.length; b++) {
             const ball = testBalls[b];
             if (!ball.alive) continue;
 
-            ball.vy += GRAVITY / SUB_STEPS;
             ball.x += ball.vx / SUB_STEPS;
             ball.y += ball.vy / SUB_STEPS;
 
@@ -182,21 +182,21 @@
             const dy = ball.y - CENTER.y;
             const dist = Math.hypot(dx, dy);
 
-            // Rebot de paret: acceleració individual
+            // Rebot de paret
             if (dist >= ARENA_RADIUS - ball.radius) {
               const nx = dx / (dist || 1);
               const ny = dy / (dist || 1);
               const dot = ball.vx * nx + ball.vy * ny;
 
               if (dot > 0) {
-                ball.vx = (ball.vx - 2 * dot * nx) * INDIVIDUAL_BOUNCE_ACCEL;
-                ball.vy = (ball.vy - 2 * dot * ny) * INDIVIDUAL_BOUNCE_ACCEL;
+                let rx = (ball.vx - 2 * dot * nx) * INDIVIDUAL_BOUNCE_ACCEL;
+                let ry = (ball.vy - 2 * dot * ny) * INDIVIDUAL_BOUNCE_ACCEL;
 
-                const curSpeed = Math.hypot(ball.vx, ball.vy);
-                if (curSpeed > MAX_SPEED) {
-                  ball.vx = (ball.vx / curSpeed) * MAX_SPEED;
-                  ball.vy = (ball.vy / curSpeed) * MAX_SPEED;
-                }
+                // Micro-variació d'angle per evitar bucles infinits
+                const ang = Math.atan2(ry, rx) + (Math.random() - 0.5) * 0.12;
+                const spd = Math.min(MAX_SPEED, Math.max(MIN_SPEED, Math.hypot(rx, ry)));
+                ball.vx = Math.cos(ang) * spd;
+                ball.vy = Math.sin(ang) * spd;
 
                 ball.x = CENTER.x + nx * (ARENA_RADIUS - ball.radius);
                 ball.y = CENTER.y + ny * (ARENA_RADIUS - ball.radius);
@@ -209,7 +209,7 @@
             }
           }
 
-          // 2. REBOT ELÀSTIC ENTRE BOLES
+          // 2. Rebot elàstic entre boles
           for (let i = 0; i < testBalls.length; i++) {
             for (let j = i + 1; j < testBalls.length; j++) {
               const b1 = testBalls[i], b2 = testBalls[j];
@@ -244,7 +244,7 @@
             }
           }
 
-          // 3. Tallar cordes físicament
+          // 3. Tallar cordes
           for (let b = 0; b < testBalls.length; b++) {
             const cutter = testBalls[b];
             if (!cutter.alive) continue;
@@ -341,11 +341,10 @@
       globalFrame++;
 
       for (let s = 0; s < SUB_STEPS; s++) {
-        // 1. Moure boles vives
+        // 1. Moure boles vives (zero gravity: línia recta constant)
         balls.forEach(ball => {
           if (!ball.alive) return;
 
-          ball.vy += GRAVITY / SUB_STEPS;
           ball.x += ball.vx / SUB_STEPS;
           ball.y += ball.vy / SUB_STEPS;
 
@@ -353,21 +352,20 @@
           const dy = ball.y - CENTER.y;
           const dist = Math.hypot(dx, dy);
 
-          // Rebot de paret: acceleració individual
+          // Rebot de paret amb lleugera variació angular
           if (dist >= ARENA_RADIUS - ball.radius) {
             const nx = dx / (dist || 1);
             const ny = dy / (dist || 1);
             const dot = ball.vx * nx + ball.vy * ny;
 
             if (dot > 0) {
-              ball.vx = (ball.vx - 2 * dot * nx) * INDIVIDUAL_BOUNCE_ACCEL;
-              ball.vy = (ball.vy - 2 * dot * ny) * INDIVIDUAL_BOUNCE_ACCEL;
+              let rx = (ball.vx - 2 * dot * nx) * INDIVIDUAL_BOUNCE_ACCEL;
+              let ry = (ball.vy - 2 * dot * ny) * INDIVIDUAL_BOUNCE_ACCEL;
 
-              const curSpeed = Math.hypot(ball.vx, ball.vy);
-              if (curSpeed > MAX_SPEED) {
-                ball.vx = (ball.vx / curSpeed) * MAX_SPEED;
-                ball.vy = (ball.vy / curSpeed) * MAX_SPEED;
-              }
+              const ang = Math.atan2(ry, rx) + (Math.random() - 0.5) * 0.12;
+              const spd = Math.min(MAX_SPEED, Math.max(MIN_SPEED, Math.hypot(rx, ry)));
+              ball.vx = Math.cos(ang) * spd;
+              ball.vy = Math.sin(ang) * spd;
 
               ball.x = CENTER.x + nx * (ARENA_RADIUS - ball.radius);
               ball.y = CENTER.y + ny * (ARENA_RADIUS - ball.radius);
@@ -383,7 +381,7 @@
           }
         });
 
-        // 2. REBOT ELÀSTIC ENTRE BOLES
+        // 2. Rebot elàstic entre boles (billar)
         for (let i = 0; i < balls.length; i++) {
           for (let j = i + 1; j < balls.length; j++) {
             const b1 = balls[i], b2 = balls[j];
@@ -423,7 +421,7 @@
           }
         }
 
-        // 3. Tallar cordes només en contacte físic
+        // 3. Tallar cordes
         balls.forEach(cutter => {
           if (!cutter.alive) return;
 
@@ -441,7 +439,7 @@
                   cutSparks.push({ x: cutter.x, y: cutter.y, life: 10, color: target.color });
                 }
 
-                // Si es queda a 0 cordes -> MORT
+                // Eliminació en quedar-se a 0 cordes
                 if (target.lines.length === 0) {
                   target.alive = false;
                   spawnDeathBurst(target.x, target.y, target.color);
@@ -487,7 +485,7 @@
       ctx.fillStyle = '#030712';
       ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
-      // 1. Cordes optimitzades en un sol traç
+      // 1. DIBUIX DE CORDES OPTIMITZAT
       balls.forEach(ball => {
         if (!ball.alive || ball.lines.length === 0) return;
 
@@ -513,7 +511,7 @@
       ctx.stroke();
       ctx.restore();
 
-      // 3. Guspires
+      // 3. Guspires de tall
       cutSparks.forEach(s => {
         s.life--;
         ctx.fillStyle = s.color;
@@ -533,7 +531,7 @@
       });
       particles = particles.filter(p => p.life > 0);
 
-      // 5. Boles
+      // 5. Dibuixar boles vives
       balls.forEach(ball => {
         if (!ball.alive) return;
 
@@ -564,7 +562,7 @@
       ctx.textAlign = 'center';
       ctx.fillText('bouncelab.tv', CENTER.x, CENTER.y + 12);
 
-      // 6. Marcador
+      // 6. Marcador superior
       ctx.save();
       ctx.textAlign = 'center';
 
