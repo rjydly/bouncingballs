@@ -54,7 +54,7 @@
     const BALL_RADIUS = 21;
     const GRAVITY = 950;              // Gravetat realista (px/s²)
     const INITIAL_SPEED = 620;        // Impuls inicial
-    const BOUNCE_RESTITUTION = 1.015; // Elasticitat als rebots
+    const BOUNCE_RESTITUTION = 1.015; // Elasticitat
     const MAX_SPEED = 920;
     const MIN_SPEED = 380;
 
@@ -165,11 +165,9 @@
 
           if (diff <= gapSize / 2) {
             // La bola escapa!
-            // Comprovem si compleix estrictament el rang [18s - 80s]
             if (simTime >= STRICT_MIN_DURATION && simTime <= STRICT_MAX_DURATION) {
               return { success: true, duration: simTime, frozenCount: frozen.length, seed, timePerBall };
             }
-            // Si és menor a 18s o major a 80s, la descartem automàticament
             return { success: false, duration: simTime };
           } else {
             const nx = dx / (dist || 1);
@@ -218,7 +216,6 @@
         }
       }
 
-      // Si ha superat els 80s, es descarta
       return { success: false, duration: simTime };
     }
 
@@ -230,7 +227,7 @@
       for (let s = 1; s < 1200; s++) {
         const res = simulateCandidate(s);
         if (res.success) {
-          console.log(`✅ PARTIDA ÒPTIMA TROBADA (Intent #${s})! Durada: ${res.duration.toFixed(1)}s, Temps/bola: ${res.timePerBall}s, Congelades: ${res.frozenCount}`);
+          console.log(`✅ PARTIDA ÒPTIMA CONFIRMADA (Intent #${s})! Durada: ${res.duration.toFixed(1)}s, Temps/bola: ${res.timePerBall}s, Congelades: ${res.frozenCount}`);
           return res;
         }
 
@@ -293,16 +290,16 @@
     let iceSparks = [];
     let hasEscaped = false;
 
-    function spawnFreezeBurst(x, y, colorStr) {
-      for (let i = 0; i < 35; i++) {
+    function spawnFreezeBurst(x, y) {
+      for (let i = 0; i < 30; i++) {
         const ang = Math.random() * Math.PI * 2;
         const spd = 4 + Math.random() * 12;
         iceSparks.push({
           x, y,
           vx: Math.cos(ang) * spd,
           vy: Math.sin(ang) * spd,
-          life: 28,
-          color: colorStr
+          life: 26,
+          color: '#94a3b8'
         });
       }
     }
@@ -424,10 +421,9 @@
         frozenBalls.push({
           x: activeBall.x,
           y: activeBall.y,
-          color: activeBall.color,
           id: currentBallNumber
         });
-        spawnFreezeBurst(activeBall.x, activeBall.y, activeBall.color);
+        spawnFreezeBurst(activeBall.x, activeBall.y);
         recordSound('freeze', 5);
 
         currentBallNumber++;
@@ -520,22 +516,15 @@
       });
       particles = particles.filter(p => p.life > 0);
 
-      // Boles congelades
+      // BOLES CONGELADES: NOMÉS UNA SOLA RODONA GRISA SÒLIDA
+      ctx.save();
+      ctx.fillStyle = '#64748b'; // Gris sòlid net (sense rivets ni resplendors)
       frozenBalls.forEach(fb => {
-        ctx.save();
-        ctx.shadowBlur = 10;
-        ctx.shadowColor = fb.color;
-
-        ctx.fillStyle = '#cbd5e1';
         ctx.beginPath();
         ctx.arc(fb.x, fb.y, BALL_RADIUS, 0, Math.PI * 2);
         ctx.fill();
-
-        ctx.strokeStyle = fb.color;
-        ctx.lineWidth = 3.5;
-        ctx.stroke();
-        ctx.restore();
       });
+      ctx.restore();
 
       // Estela
       activeBall.trail.forEach((pt, i) => {
@@ -647,7 +636,6 @@
 
       mediaRecorder.start();
 
-      // Topall de seguretat ampli per cobrir partides de fins a 80s
       setTimeout(() => {
         if (mediaRecorder.state !== 'inactive') {
           window.actualDuration = (performance.now() - startTime) / 1000;
