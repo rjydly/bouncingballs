@@ -213,7 +213,8 @@ def run():
     synthesize_soundtrack(sound_events, actual_duration, meme_audio, audio_file)
 
     final_mp4 = "bouncelab_video.mp4"
-    print("Empaquetant MP4 final amb FFmpeg...")
+    print("Empaquetant MP4 final amb FFmpeg a 60 FPS constants...")
+    # Afegim -r 60 i -vsync cfr per garantir que el vídeo vagi a 60 FPS constants sense estrebades
     subprocess.run(
         [
             "ffmpeg",
@@ -226,6 +227,10 @@ def run():
             "libx264",
             "-preset",
             "fast",
+            "-r",
+            "60",
+            "-vsync",
+            "cfr",
             "-pix_fmt",
             "yuv420p",
             "-crf",
