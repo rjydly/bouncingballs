@@ -37,6 +37,9 @@
     window.soundEvents = [];
     window.actualDuration = 0;
     window.winnerName = "";
+    window.color1Name = "";
+    window.color2Name = "";
+    window.ringCount = 4;
 
     let startTime = null;
     let globalFrame = 0;
@@ -56,65 +59,222 @@
     }
 
     // ==========================================
-    // 1. FÍSICA I PILOTES ASIMÈTRIQUES
+    // 1. PALETA DE COLORS NEÓ
+    // ==========================================
+    const PALETTE = [
+      { name: "CYAN", color: "#00f2fe", glow: "#00f2fe" },
+      { name: "PINK", color: "#ff007f", glow: "#ff007f" },
+      { name: "LIME", color: "#39ff14", glow: "#39ff14" },
+      { name: "GOLD", color: "#ffd700", glow: "#ffd700" },
+      { name: "PURPLE", color: "#b026ff", glow: "#b026ff" },
+      { name: "ORANGE", color: "#ff6600", glow: "#ff6600" },
+      { name: "RED", color: "#ff2a2a", glow: "#ff2a2a" },
+      { name: "BLUE", color: "#1e90ff", glow: "#1e90ff" },
+      { name: "EMERALD", color: "#00ff88", glow: "#00ff88" }
+    ];
+
+    function pickTwoColors() {
+      const shuffled = [...PALETTE].sort(() => Math.random() - 0.5);
+      return [shuffled[0], shuffled[1]];
+    }
+
+    // ==========================================
+    // 2. CONSTANTS FÍSIQUES
     // ==========================================
     const GRAVITY = 0.75;
     const BOUNCE_ACCEL = 1.012;
     const MAX_SPEED = 46;
     const BALL_RADIUS = 18;
 
-    const angle1 = Math.random() * Math.PI * 2;
-    const speed1 = 28 + Math.random() * 5;
-    const angle2 = (angle1 + Math.PI * 0.45 + Math.random() * Math.PI * 0.7) % (Math.PI * 2);
-    const speed2 = 28 + Math.random() * 5;
+    // Generador d'una configuració candidata
+    function generateCandidateSetup() {
+      const ringCount = Math.floor(Math.random() * 4) + 4; // Entre 4 i 7 anells
+      const [colA, colB] = pickTwoColors();
 
-    let balls = [
-      {
-        id: 1,
-        name: "CYAN",
-        x: CENTER.x - 35,
-        y: CENTER.y - 40,
-        vx: Math.cos(angle1) * speed1,
-        vy: Math.sin(angle1) * speed1,
-        radius: BALL_RADIUS,
-        color: '#00f2fe',
-        glowColor: '#00f2fe',
-        hueOffset: 0,
-        trail: []
-      },
-      {
-        id: 2,
-        name: "PINK",
-        x: CENTER.x + 35,
-        y: CENTER.y - 40,
-        vx: Math.cos(angle2) * speed2,
-        vy: Math.sin(angle2) * speed2,
-        radius: BALL_RADIUS,
-        color: '#ff007f',
-        glowColor: '#ff007f',
-        hueOffset: 180,
-        trail: []
+      const baseRadius = 150;
+      const spacing = ringCount <= 5 ? 70 : (ringCount === 6 ? 62 : 55);
+      const rings = [];
+
+      for (let i = 0; i < ringCount; i++) {
+        const hue = (i * (360 / ringCount) + Math.random() * 40) % 360;
+        rings.push({
+          radius: baseRadius + i * spacing,
+          gapAngle: Math.random() * Math.PI * 2,
+          gapSize: 0.44, // ~25 graus
+          speed: (Math.random() > 0.5 ? 1 : -1) * (0.024 + i * 0.005),
+          hue: hue,
+          color: `hsl(${hue}, 100%, 65%)`,
+          alive: true,
+          flash: 0
+        });
       }
-    ];
 
-    const RING_COUNT = 4;
-    const BASE_RADIUS = 160;
-    const SPACING = 72;
-    let rings = [];
+      const angle1 = Math.random() * Math.PI * 2;
+      const speed1 = 28 + Math.random() * 5;
+      const angle2 = (angle1 + Math.PI * 0.45 + Math.random() * Math.PI * 0.7) % (Math.PI * 2);
+      const speed2 = 28 + Math.random() * 5;
 
-    for (let i = 0; i < RING_COUNT; i++) {
-      const hue = (i * 65 + 20) % 360;
-      rings.push({
-        radius: BASE_RADIUS + i * SPACING,
-        gapAngle: Math.random() * Math.PI * 2,
-        gapSize: 0.42,
-        speed: (Math.random() > 0.5 ? 1 : -1) * (0.024 + i * 0.006),
-        hue: hue,
-        color: `hsl(${hue}, 100%, 65%)`,
-        alive: true,
-        flash: 0
-      });
+      const balls = [
+        {
+          id: 1,
+          name: colA.name,
+          color: colA.color,
+          glowColor: colA.glow,
+          hueOffset: 0,
+          x: CENTER.x - 35,
+          y: CENTER.y - 40,
+          vx: Math.cos(angle1) * speed1,
+          vy: Math.sin(angle1) * speed1,
+          radius: BALL_RADIUS,
+          trail: []
+        },
+        {
+          id: 2,
+          name: colB.name,
+          color: colB.color,
+          glowColor: colB.glow,
+          hueOffset: 180,
+          x: CENTER.x + 35,
+          y: CENTER.y - 40,
+          vx: Math.cos(angle2) * speed2,
+          vy: Math.sin(angle2) * speed2,
+          radius: BALL_RADIUS,
+          trail: []
+        }
+      ];
+
+      return { ringCount, rings, balls };
     }
+
+    // ==========================================
+    // 3. PRE-SIMULACIÓ RÀPIDA (FINDER < 85s)
+    // ==========================================
+    function simulateDuration(setup, maxAllowedSec = 82) {
+      // Clona l'estat per fer una prova ultraràpida en memòria
+      const testRings = setup.rings.map(r => ({ ...r, alive: true }));
+      const testBalls = setup.balls.map(b => ({
+        x: b.x,
+        y: b.y,
+        vx: b.vx,
+        vy: b.vy,
+        radius: b.radius
+      }));
+
+      const FPS = 60;
+      const SUB_STEPS = 8;
+      const maxFrames = maxAllowedSec * FPS;
+      let frame = 0;
+
+      while (frame < maxFrames) {
+        frame++;
+
+        // Rotació anells
+        for (let i = 0; i < testRings.length; i++) {
+          if (testRings[i].alive) {
+            testRings[i].gapAngle = (testRings[i].gapAngle + testRings[i].speed) % (Math.PI * 2);
+          }
+        }
+
+        for (let s = 0; s < SUB_STEPS; s++) {
+          for (let b = 0; b < testBalls.length; b++) {
+            const ball = testBalls[b];
+            ball.vy += GRAVITY / SUB_STEPS;
+            ball.x += ball.vx / SUB_STEPS;
+            ball.y += ball.vy / SUB_STEPS;
+
+            const curSpeed = Math.hypot(ball.vx, ball.vy);
+            if (curSpeed > MAX_SPEED) {
+              ball.vx = (ball.vx / curSpeed) * MAX_SPEED;
+              ball.vy = (ball.vy / curSpeed) * MAX_SPEED;
+            }
+
+            const dx = ball.x - CENTER.x;
+            const dy = ball.y - CENTER.y;
+            const dist = Math.hypot(dx, dy);
+            const nx = dx / (dist || 1);
+            const ny = dy / (dist || 1);
+
+            let hitAngle = Math.atan2(dy, dx);
+            if (hitAngle < 0) hitAngle += Math.PI * 2;
+
+            for (let r = 0; r < testRings.length; r++) {
+              const ring = testRings[r];
+              if (!ring.alive) continue;
+
+              const contactDist = ring.radius;
+              if (Math.abs(dist - contactDist) <= ball.radius) {
+                let diff = Math.abs(hitAngle - ring.gapAngle) % (Math.PI * 2);
+                if (diff > Math.PI) diff = Math.PI * 2 - diff;
+
+                if (diff <= ring.gapSize / 2) {
+                  ring.alive = false;
+                  // Si s'han trencat tots, hem acabat
+                  if (testRings.every(x => !x.alive)) {
+                    return frame / FPS;
+                  }
+                } else {
+                  const dot = ball.vx * nx + ball.vy * ny;
+                  if (dot > 0) {
+                    ball.vx = (ball.vx - 2 * dot * nx) * BOUNCE_ACCEL;
+                    ball.vy = (ball.vy - 2 * dot * ny) * BOUNCE_ACCEL;
+                    ball.x = CENTER.x + nx * (contactDist - ball.radius);
+                    ball.y = CENTER.y + ny * (contactDist - ball.radius);
+                  } else if (dot < 0) {
+                    ball.vx = (ball.vx - 2 * dot * nx) * BOUNCE_ACCEL;
+                    ball.vy = (ball.vy - 2 * dot * ny) * BOUNCE_ACCEL;
+                    ball.x = CENTER.x + nx * (contactDist + ball.radius);
+                    ball.y = CENTER.y + ny * (contactDist + ball.radius);
+                  }
+                }
+              }
+            }
+          }
+
+          // Xoc boles
+          const b1 = testBalls[0], b2 = testBalls[1];
+          const cdx = b2.x - b1.x, cdy = b2.y - b1.y;
+          const cDist = Math.hypot(cdx, cdy);
+          const minDist = b1.radius + b2.radius;
+          if (cDist < minDist && cDist > 0) {
+            const cnx = cdx / cDist, cny = cdy / cDist;
+            const rvx = b1.vx - b2.vx, rvy = b1.vy - b2.vy;
+            const velNorm = rvx * cnx + rvy * cny;
+            if (velNorm > 0) {
+              b1.vx -= velNorm * cnx; b1.vy -= velNorm * cny;
+              b2.vx += velNorm * cnx; b2.vy += velNorm * cny;
+              const sep = (minDist - cDist) / 2;
+              b1.x -= cnx * sep; b1.y -= cny * sep;
+              b2.x += cnx * sep; b2.y += cny * sep;
+            }
+          }
+        }
+      }
+
+      return Infinity; // Ha superat el temps màxim permès
+    }
+
+    // Cerca un setup que duri entre 20s i 82s (sempre < 1.5 minuts)
+    function findOptimalGame() {
+      console.log("🔍 Pre-calculant simulació (límit màxim: 85 segons)...");
+      for (let attempt = 0; attempt < 400; attempt++) {
+        const candidate = generateCandidateSetup();
+        const dur = simulateDuration(candidate, 82);
+        if (dur >= 20 && dur <= 82) {
+          console.log(`✅ Partida ideal trobada en ${attempt + 1} intents! Durada prevista: ${dur.toFixed(1)}s`);
+          return candidate;
+        }
+      }
+      return generateCandidateSetup();
+    }
+
+    // Inicialitzem el joc definitiu trobat
+    const activeGame = findOptimalGame();
+    let rings = activeGame.rings;
+    let balls = activeGame.balls;
+
+    window.color1Name = balls[0].name;
+    window.color2Name = balls[1].name;
+    window.ringCount = rings.length;
 
     let particles = [];
 
@@ -148,7 +308,7 @@
     }
 
     // ==========================================
-    // 2. DETECCIÓ I FÍSICA
+    // 4. BUCLE DE FÍSICA EN TEMPS REAL
     // ==========================================
     function updatePhysics() {
       if (!isRunning) return;
@@ -213,13 +373,11 @@
                 }
               } else {
                 const dot = ball.vx * nx + ball.vy * ny;
-
                 if (dot > 0) {
                   ball.vx = (ball.vx - 2 * dot * nx) * BOUNCE_ACCEL;
                   ball.vy = (ball.vy - 2 * dot * ny) * BOUNCE_ACCEL;
                   ball.x = CENTER.x + nx * (contactDist - ball.radius);
                   ball.y = CENTER.y + ny * (contactDist - ball.radius);
-
                   ring.flash = 1.0;
                   recordSoundHit(idx, false);
                 } else if (dot < 0) {
@@ -227,7 +385,6 @@
                   ball.vy = (ball.vy - 2 * dot * ny) * BOUNCE_ACCEL;
                   ball.x = CENTER.x + nx * (contactDist + ball.radius);
                   ball.y = CENTER.y + ny * (contactDist + ball.radius);
-
                   ring.flash = 1.0;
                   recordSoundHit(idx, false);
                 }
@@ -236,32 +393,23 @@
           });
         });
 
-        // Xoc entre pilotes
+        // Xoc elàstic entre boles
         const b1 = balls[0], b2 = balls[1];
-        const cdx = b2.x - b1.x;
-        const cdy = b2.y - b1.y;
+        const cdx = b2.x - b1.x, cdy = b2.y - b1.y;
         const cDist = Math.hypot(cdx, cdy);
         const minDist = b1.radius + b2.radius;
 
         if (cDist < minDist && cDist > 0) {
-          const cnx = cdx / cDist;
-          const cny = cdy / cDist;
-          const rvx = b1.vx - b2.vx;
-          const rvy = b1.vy - b2.vy;
-          const velAlongNorm = rvx * cnx + rvy * cny;
+          const cnx = cdx / cDist, cny = cdy / cDist;
+          const rvx = b1.vx - b2.vx, rvy = b1.vy - b2.vy;
+          const velNorm = rvx * cnx + rvy * cny;
 
-          if (velAlongNorm > 0) {
-            b1.vx -= velAlongNorm * cnx;
-            b1.vy -= velAlongNorm * cny;
-            b2.vx += velAlongNorm * cnx;
-            b2.vy += velAlongNorm * cny;
-
+          if (velNorm > 0) {
+            b1.vx -= velNorm * cnx; b1.vy -= velNorm * cny;
+            b2.vx += velNorm * cnx; b2.vy += velNorm * cny;
             const sep = (minDist - cDist) / 2;
-            b1.x -= cnx * sep;
-            b1.y -= cny * sep;
-            b2.x += cnx * sep;
-            b2.y += cny * sep;
-
+            b1.x -= cnx * sep; b1.y -= cny * sep;
+            b2.x += cnx * sep; b2.y += cny * sep;
             recordSoundHit(9, false);
           }
         }
@@ -282,7 +430,7 @@
     }
 
     // ==========================================
-    // 3. RENDERITZAT VISUAL
+    // 5. RENDERITZAT VISUAL DINÀMIC
     // ==========================================
     function render() {
       ctx.fillStyle = '#030712';
@@ -292,7 +440,6 @@
       rings.forEach(ring => {
         if (!ring.alive) return;
         ctx.save();
-
         const glowSize = ring.flash > 0 ? 32 : 16;
         ctx.shadowBlur = glowSize;
         ctx.shadowColor = ring.flash > 0 ? '#ffffff' : ring.color;
@@ -335,7 +482,7 @@
       });
       particles = particles.filter(p => p.life > 0);
 
-      // Pilotes
+      // Pilotes amb els seus colors triats
       balls.forEach(ball => {
         ctx.save();
         ctx.shadowBlur = 25;
@@ -353,7 +500,7 @@
       ctx.textAlign = 'center';
       ctx.fillText('bouncelab.tv', CENTER.x, CENTER.y + 12);
 
-      // GANXO DE TEXT MODIFICAT
+      // Ganxo de text
       ctx.save();
       ctx.textAlign = 'center';
 
@@ -370,7 +517,6 @@
         ctx.shadowColor = '#ffffff';
         ctx.fillText('ESCAPED FIRST!', CENTER.x, 300);
       } else {
-        // "WHICH ONE ESCAPES FIRST?"
         ctx.font = '800 56px sans-serif';
         ctx.fillStyle = '#ffffff';
         ctx.shadowBlur = 18;
@@ -378,12 +524,12 @@
         ctx.fillText('WHICH ONE ESCAPES FIRST?', CENTER.x, 240);
 
         ctx.font = '700 32px sans-serif';
-        ctx.fillStyle = '#00f2fe';
-        ctx.fillText('CYAN', CENTER.x - 110, 292);
+        ctx.fillStyle = balls[0].color;
+        ctx.fillText(balls[0].name, CENTER.x - 110, 292);
         ctx.fillStyle = '#ffffff';
         ctx.fillText('vs', CENTER.x, 292);
-        ctx.fillStyle = '#ff007f';
-        ctx.fillText('PINK', CENTER.x + 110, 292);
+        ctx.fillStyle = balls[1].color;
+        ctx.fillText(balls[1].name, CENTER.x + 110, 292);
       }
       ctx.restore();
 
@@ -399,7 +545,7 @@
     }
 
     // ==========================================
-    // 4. GRAVADOR SINCRONITZAT AL SEGON 0
+    // 6. GRAVADOR SINCRONITZAT
     // ==========================================
     let mediaRecorder;
     let recordedChunks = [];
@@ -442,12 +588,13 @@
 
       mediaRecorder.start();
 
+      // Topall màxim de 90 segons (1.5 minuts)
       setTimeout(() => {
         if (mediaRecorder.state !== 'inactive') {
           window.actualDuration = (performance.now() - startTime) / 1000;
           mediaRecorder.stop();
         }
-      }, 60000);
+      }, 90000);
     };
 
     render();
