@@ -162,7 +162,6 @@ def synthesize_soundtrack(
     total_samples = int((duration_sec + 1.5) * SAMPLE_RATE)
     audio_data = np.zeros(total_samples, dtype=np.float32)
 
-    # Inserció de la veu inicial amb ducking
     tts_start_sample = int(0.15 * SAMPLE_RATE)
     tts_end_sample = 0
     if tts_audio is not None and len(tts_audio) > 0:
@@ -193,7 +192,6 @@ def synthesize_soundtrack(
                 meme_audio[:n_samples] * 0.95
             )
         elif is_reveal:
-            # Acord brillant d'escapada
             note_len = 1.3
             n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
             t = np.linspace(0, note_len, n_samples, False)
@@ -205,7 +203,6 @@ def synthesize_soundtrack(
             ) * np.exp(-3.5 * t)
             audio_data[start_sample : start_sample + n_samples] += chord
         elif ev_type == "freeze":
-            # So de congelació / cruixit de gel
             note_len = 0.22
             n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
             t = np.linspace(0, note_len, n_samples, False)
@@ -216,7 +213,6 @@ def synthesize_soundtrack(
             ) * np.exp(-12 * t)
             audio_data[start_sample : start_sample + n_samples] += ice * 0.50
         else:
-            # Rebot harmònic pentatònic suau
             freq = FREQUENCIES[note_idx % len(FREQUENCIES)]
             note_len = 0.08
             n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
