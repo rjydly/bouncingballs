@@ -43,7 +43,7 @@
 
   <script>
     // ============================================================
-    // 0. CONFIGURACIÓ GLOBAL
+    // 0. CONFIGURACIÓ GLOBAL I CONSTANTS FÍSIQUES
     // ============================================================
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
@@ -52,8 +52,12 @@
 
     const ARENA_RADIUS = 410;
     const BALL_RADIUS = 21;
-    const BALL_SPEED = 640;
-    const TIME_PER_BALL = 4.2; // Segons que té cada bola abans de congelar-se
+    const GRAVITY = 950;          // Gravetat cap avall (px/s²)
+    const INITIAL_SPEED = 620;    // Impuls inicial en direcció aleatòria
+    const BOUNCE_RESTITUTION = 1.015; // Manté l'energia als rebots
+    const MAX_SPEED = 920;
+    const MIN_SPEED = 380;
+    const TIME_PER_BALL = 4.2;    // Segons abans de congelar-se
 
     window.soundEvents = [];
     window.actualDuration = 0;
@@ -77,7 +81,7 @@
     }
 
     // ============================================================
-    // 1. GENERADOR DETERMINISTA (PRNG PER REPRODUIR LA MILLOR PARTIDA)
+    // 1. GENERADOR DETERMINISTA (PRNG)
     // ============================================================
     function createPRNG(seed) {
       let s = seed % 2147483647;
@@ -89,24 +93,23 @@
     }
 
     // ============================================================
-    // 2. PRE-SIMULACIÓ (TROBA PARTIDA GARANTIDA ENTRE 20s I 36s)
+    // 2. PRE-SIMULACIÓ AMB GRAVETAT (FILTRA 20s A 36s)
     // ============================================================
     function simulateCandidate(seed) {
       const rnd = createPRNG(seed);
       let gapAngle = rnd() * Math.PI * 2;
       const rotSpeed = 0.55;
-      const gapSize = 0.62; // ~35 graus
+      const gapSize = 0.62;
 
       let simTime = 0;
-      let ballIdx = 1;
       let frozen = [];
 
       let ballAng = rnd() * Math.PI * 2;
       let b = {
         x: CENTER.x,
-        y: CENTER.y,
-        vx: Math.cos(ballAng) * BALL_SPEED,
-        vy: Math.sin(ballAng) * BALL_SPEED,
+        y: CENTER.y - 40,
+        vx: Math.cos(ballAng) * INITIAL_SPEED,
+        vy: Math.sin(ballAng) * INITIAL_SPEED,
         timer: TIME_PER_BALL
       };
 
@@ -118,9 +121,20 @@
         gapAngle = (gapAngle + rotSpeed * DT) % (Math.PI * 2);
         b.timer -= DT;
 
-        // Moviment
+        // Gravetat
+        b.vy += GRAVITY * DT;
         b.x += b.vx * DT;
         b.y += b.vy * DT;
+
+        // Límit de velocitat
+        const spd = Math.hypot(b.vx, b.vy);
+        if (spd > MAX_SPEED) {
+          b.vx = (b.vx / spd) * MAX_SPEED;
+          b.vy = (b.vy / spd) * MAX_SPEED;
+        } else if (spd < MIN_SPEED && spd > 0.001) {
+          b.vx = (b.vx / spd) * MIN_SPEED;
+          b.vy = (b.vy / spd) * MIN_SPEED;
+        }
 
         // Comprovar paret
         const dx = b.x - CENTER.x;
@@ -135,19 +149,19 @@
           if (diff > Math.PI) diff = Math.PI * 2 - diff;
 
           if (diff <= gapSize / 2) {
-            // Ha escapat!
             if (simTime >= 20.0 && simTime <= 36.0 && frozen.length >= 4) {
               return { success: true, duration: simTime, frozenCount: frozen.length, seed };
             }
             return { success: false };
           } else {
-            // Rebot de paret
             const nx = dx / (dist || 1);
             const ny = dy / (dist || 1);
             const dot = b.vx * nx + b.vy * ny;
             if (dot > 0) {
-              b.vx -= 2 * dot * nx;
-              b.vy -= 2 * dot * ny;
+              b.vx = (b.vx - 2 * dot * nx) * BOUNCE_RESTITUTION;
+              b.vy = (b.vy - 2 * dot * ny) * BOUNCE_RESTITUTION;
+              b.x = CENTER.x + nx * (ARENA_RADIUS - BALL_RADIUS);
+              b.y = CENTER.y + ny * (ARENA_RADIUS - BALL_RADIUS);
             }
           }
         }
@@ -164,22 +178,23 @@
             const fny = fdy / fdist;
             const fdot = b.vx * fnx + b.vy * fny;
             if (fdot < 0) {
-              b.vx -= 2 * fdot * fnx;
-              b.vy -= 2 * fdot * fny;
+              b.vx = (b.vx - 2 * fdot * fnx) * BOUNCE_RESTITUTION;
+              b.vy = (b.vy - 2 * fdot * fny) * BOUNCE_RESTITUTION;
+              b.x = f.x + fnx * minDist;
+              b.y = f.y + fny * minDist;
             }
           }
         }
 
-        // Temps esgotat: congelar bola
+        // Temps esgotat: congelar i generar nova bola
         if (b.timer <= 0) {
           frozen.push({ x: b.x, y: b.y });
-          ballIdx++;
           const newAng = rnd() * Math.PI * 2;
           b = {
             x: CENTER.x,
-            y: CENTER.y,
-            vx: Math.cos(newAng) * BALL_SPEED,
-            vy: Math.sin(newAng) * BALL_SPEED,
+            y: CENTER.y - 40,
+            vx: Math.cos(newAng) * INITIAL_SPEED,
+            vy: Math.sin(newAng) * INITIAL_SPEED,
             timer: TIME_PER_BALL
           };
         }
@@ -191,18 +206,18 @@
       for (let s = 1; s < 500; s++) {
         const res = simulateCandidate(s);
         if (res.success) {
-          console.log(`✅ Partida d'acumulació òptima trobada! Seed: ${s}, durada: ${res.duration.toFixed(1)}s, boles congelades: ${res.frozenCount}`);
+          console.log(`✅ Partida òptima trobada! Seed: ${s}, durada: ${res.duration.toFixed(1)}s, congelades: ${res.frozenCount}`);
           return s;
         }
       }
-      return 42; // Seed de reserva
+      return 17;
     }
 
     const optimalSeed = findBestSeed();
     const gameRND = createPRNG(optimalSeed);
 
     // ============================================================
-    // 3. ESTAT DEL JOC EN TEMPS REAL
+    // 3. ESTAT DEL JOC
     // ============================================================
     let ring = {
       radius: ARENA_RADIUS,
@@ -217,9 +232,9 @@
     let activeBallAng = gameRND() * Math.PI * 2;
     let activeBall = {
       x: CENTER.x,
-      y: CENTER.y,
-      vx: Math.cos(activeBallAng) * BALL_SPEED,
-      vy: Math.sin(activeBallAng) * BALL_SPEED,
+      y: CENTER.y - 40,
+      vx: Math.cos(activeBallAng) * INITIAL_SPEED,
+      vy: Math.sin(activeBallAng) * INITIAL_SPEED,
       timer: TIME_PER_BALL,
       trail: []
     };
@@ -257,7 +272,7 @@
     }
 
     // ============================================================
-    // 4. FÍSICA EN TEMPS REAL
+    // 4. BUCLE DE FÍSICA AMB GRAVETAT
     // ============================================================
     function updatePhysics(dt) {
       if (!isRunning || hasEscaped) return;
@@ -269,14 +284,27 @@
       activeBall.timer -= dt;
 
       for (let s = 0; s < SUB_STEPS; s++) {
+        // 1. Aplicar gravetat a la velocitat vertical
+        activeBall.vy += GRAVITY * stepDt;
+
         activeBall.x += activeBall.vx * stepDt;
         activeBall.y += activeBall.vy * stepDt;
+
+        // Control de límits de velocitat
+        const curSpd = Math.hypot(activeBall.vx, activeBall.vy);
+        if (curSpd > MAX_SPEED) {
+          activeBall.vx = (activeBall.vx / curSpd) * MAX_SPEED;
+          activeBall.vy = (activeBall.vy / curSpd) * MAX_SPEED;
+        } else if (curSpd < MIN_SPEED && curSpd > 0.001) {
+          activeBall.vx = (activeBall.vx / curSpd) * MIN_SPEED;
+          activeBall.vy = (activeBall.vy / curSpd) * MIN_SPEED;
+        }
 
         const dx = activeBall.x - CENTER.x;
         const dy = activeBall.y - CENTER.y;
         const dist = Math.hypot(dx, dy);
 
-        // Col·lisió amb el mur exterior
+        // 2. Col·lisió amb el mur exterior
         if (dist >= ARENA_RADIUS - BALL_RADIUS) {
           let hitAng = Math.atan2(dy, dx);
           if (hitAng < 0) hitAng += Math.PI * 2;
@@ -304,16 +332,13 @@
               return;
             }
           } else {
-            // Rebot de paret
+            // Rebot de paret circular
             const nx = dx / (dist || 1);
             const ny = dy / (dist || 1);
             const dot = activeBall.vx * nx + activeBall.vy * ny;
             if (dot > 0) {
-              const rx = activeBall.vx - 2 * dot * nx;
-              const ry = activeBall.vy - 2 * dot * ny;
-              const spd = Math.hypot(rx, ry) || 1;
-              activeBall.vx = (rx / spd) * BALL_SPEED;
-              activeBall.vy = (ry / spd) * BALL_SPEED;
+              activeBall.vx = (activeBall.vx - 2 * dot * nx) * BOUNCE_RESTITUTION;
+              activeBall.vy = (activeBall.vy - 2 * dot * ny) * BOUNCE_RESTITUTION;
               activeBall.x = CENTER.x + nx * (ARENA_RADIUS - BALL_RADIUS);
               activeBall.y = CENTER.y + ny * (ARENA_RADIUS - BALL_RADIUS);
               recordSound('bounce', 1);
@@ -321,7 +346,7 @@
           }
         }
 
-        // Col·lisió contra les boles congelades
+        // 3. Col·lisió contra les boles congelades
         for (let i = 0; i < frozenBalls.length; i++) {
           const f = frozenBalls[i];
           const fdx = activeBall.x - f.x;
@@ -335,12 +360,8 @@
             const fdot = activeBall.vx * fnx + activeBall.vy * fny;
 
             if (fdot < 0) {
-              const rx = activeBall.vx - 2 * fdot * fnx;
-              const ry = activeBall.vy - 2 * fdot * fny;
-              const spd = Math.hypot(rx, ry) || 1;
-              activeBall.vx = (rx / spd) * BALL_SPEED;
-              activeBall.vy = (ry / spd) * BALL_SPEED;
-
+              activeBall.vx = (activeBall.vx - 2 * fdot * fnx) * BOUNCE_RESTITUTION;
+              activeBall.vy = (activeBall.vy - 2 * fdot * fny) * BOUNCE_RESTITUTION;
               activeBall.x = f.x + fnx * minDist;
               activeBall.y = f.y + fny * minDist;
               recordSound('bounce', 2);
@@ -349,11 +370,11 @@
         }
       }
 
-      // Estela de moviment
+      // Estela
       activeBall.trail.push({ x: activeBall.x, y: activeBall.y });
       if (activeBall.trail.length > 14) activeBall.trail.shift();
 
-      // Temps esgotat: congelar bola i crear-ne una de nova
+      // Temps esgotat: congelar i generar nova bola
       if (activeBall.timer <= 0) {
         frozenBalls.push({ x: activeBall.x, y: activeBall.y, id: currentBallNumber });
         spawnFreezeBurst(activeBall.x, activeBall.y);
@@ -363,9 +384,9 @@
         const nextAng = gameRND() * Math.PI * 2;
         activeBall = {
           x: CENTER.x,
-          y: CENTER.y,
-          vx: Math.cos(nextAng) * BALL_SPEED,
-          vy: Math.sin(nextAng) * BALL_SPEED,
+          y: CENTER.y - 40,
+          vx: Math.cos(nextAng) * INITIAL_SPEED,
+          vy: Math.sin(nextAng) * INITIAL_SPEED,
           timer: TIME_PER_BALL,
           trail: []
         };
@@ -409,7 +430,7 @@
       ctx.fillText(`FREEZES EVERY ${TIME_PER_BALL.toFixed(1)}s`, CENTER.x, 365);
       ctx.restore();
 
-      // Anell exterior amb obertura giratòria
+      // Anell exterior
       ctx.save();
       ctx.shadowBlur = 18;
       ctx.shadowColor = '#00f2fe';
@@ -434,7 +455,7 @@
       });
       iceSparks = iceSparks.filter(s => s.life > 0);
 
-      // Partícules de victòria
+      // Partícules de celebració
       particles.forEach(p => {
         p.x += p.vx;
         p.y += p.vy;
@@ -446,7 +467,7 @@
       });
       particles = particles.filter(p => p.life > 0);
 
-      // Dibuixar boles congelades (estil cristall de gel)
+      // Boles congelades
       frozenBalls.forEach(fb => {
         ctx.save();
         ctx.shadowBlur = 12;
@@ -462,7 +483,7 @@
         ctx.restore();
       });
 
-      // Estela de la bola activa
+      // Estela
       activeBall.trail.forEach((pt, i) => {
         const alpha = (i + 1) / activeBall.trail.length;
         ctx.save();
@@ -473,7 +494,7 @@
         ctx.restore();
       });
 
-      // Dibuixar bola activa
+      // Bola activa
       ctx.save();
       ctx.shadowBlur = 24;
       ctx.shadowColor = '#00f2fe';
@@ -483,7 +504,7 @@
       ctx.fill();
       ctx.restore();
 
-      // Comptador de temps restant de la bola actual (arc circular al voltant del centre)
+      // HUD de temps restant
       if (!hasEscaped) {
         const timeLeft = Math.max(0, activeBall.timer);
         ctx.save();
@@ -494,7 +515,6 @@
         ctx.fillText(timeLeft.toFixed(1) + 's', CENTER.x, CENTER.y);
         ctx.restore();
       } else {
-        // Text de victòria
         ctx.save();
         ctx.textAlign = 'center';
         ctx.font = '900 74px Lexend, sans-serif';
@@ -511,7 +531,7 @@
         ctx.restore();
       }
 
-      // Marcador inferior de boles congelades
+      // Marcador inferior
       ctx.save();
       ctx.textAlign = 'center';
       ctx.font = '800 36px Lexend, sans-serif';
