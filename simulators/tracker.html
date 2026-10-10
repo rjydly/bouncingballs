@@ -1,363 +1,478 @@
-import asyncio
-import http.server
-import json
-import os
-import random
-import socketserver
-import subprocess
-import threading
-import wave
-import edge_tts
-import numpy as np
-from playwright.sync_api import sync_playwright
-import requests
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>BounceLab - Don't Lose The Red Ball</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background-color: #000000;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    canvas {
+      width: auto;
+      height: 100vh;
+      aspect-ratio: 9 / 16;
+      box-shadow: 0 0 50px rgba(0, 0, 0, 0.95);
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas" width="1080" height="1920"></canvas>
 
-# ==============================================================================
-# ⚙️ PANELL DE CONTROL PRINCIPAL
-# ==============================================================================
-SELECTED_MODE = "tracker"
-# ==============================================================================
+  <script>
+    // ============================================================
+    // 0. CONFIGURACIÓ GLOBAL
+    // ============================================================
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const WIDTH = 1080, HEIGHT = 1920;
+    const CENTER = { x: WIDTH / 2, y: HEIGHT / 2 };
+    const ARENA_RADIUS = 390;
+    const BALL_RADIUS = 22;
+    const NUM_BALLS = 15;
 
-HOOK_PHRASES = [
-    "Don't lose the red ball!",
-    "Can you track the red ball?",
-    "Keep your eyes on the red ball!",
-    "Follow the red ball and guess the number!",
-    "Don't blink or you'll lose the red ball!",
-    "Test your focus! Track the red ball!",
-    "Which number will the red ball be?",
-    "Follow the red ball to the end!",
-]
+    const COLOR_BLUE = '#38bdf8';
+    const COLOR_RED = '#ef4444';
 
-PORT = 8080
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-ASSETS_AUDIO_DIR = os.path.join(BASE_DIR, "assets", "audio")
+    window.soundEvents = [];
+    window.actualDuration = 0;
+    window.winnerName = "";
 
+    function recordSound(type, note = 0) {
+      if (startTime !== null) {
+        const timeSec = (performance.now() - startTime) / 1000;
+        window.soundEvents.push({
+          time: timeSec,
+          type: type,
+          note: note,
+          isEscape: type === 'reveal'
+        });
+      }
+    }
 
-class CustomHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, directory=BASE_DIR, **kwargs)
+    // ============================================================
+    // 1. GENERACIÓ DELS 15 SLOTS I LES BOLES
+    // ============================================================
+    const slots = [];
+    for (let i = 0; i < NUM_BALLS; i++) {
+      const theta = -Math.PI / 2 + (2 * Math.PI / NUM_BALLS) * (i + 0.5);
+      slots.push({
+        number: i + 1,
+        angle: theta,
+        x: CENTER.x + Math.cos(theta) * ARENA_RADIUS,
+        y: CENTER.y + Math.sin(theta) * ARENA_RADIUS,
+        textX: CENTER.x + Math.cos(theta) * (ARENA_RADIUS + 58),
+        textY: CENTER.y + Math.sin(theta) * (ARENA_RADIUS + 58)
+      });
+    }
 
+    const targetSlotIndex = Math.floor(Math.random() * NUM_BALLS);
 
-def start_local_server():
-    httpd = socketserver.TCPServer(("", PORT), CustomHTTPRequestHandler)
-    thread = threading.Thread(target=httpd.serve_forever)
-    thread.daemon = True
-    thread.start()
-    print(f"Servidor web local actiu a http://localhost:{PORT} (servint des de {BASE_DIR})")
+    const balls = [];
+    for (let i = 0; i < NUM_BALLS; i++) {
+      balls.push({
+        id: i + 1,
+        isTarget: i === targetSlotIndex,
+        x: slots[i].x,
+        y: slots[i].y,
+        vx: 0,
+        vy: 0,
+        radius: BALL_RADIUS,
+        color: i === targetSlotIndex ? COLOR_RED : COLOR_BLUE,
+        startX: slots[i].x,
+        startY: slots[i].y,
+        targetSlot: null
+      });
+    }
 
+    let startTime = null;
+    let isRunning = false;
+    let isFinished = false;
 
-async def _async_generate_voice(text, output_mp3):
-    communicate = edge_tts.Communicate(
-        text, voice="en-US-ChristopherNeural", rate="+10%", volume="+35%"
-    )
-    await communicate.save(output_mp3)
+    let lastTickSecond = -1;
+    let slotAssigned = false;
+    let revealDone = false;
 
+    // ============================================================
+    // 2. FÍSICA DE SHUFFLING
+    // ============================================================
+    function initShufflePhysics() {
+      const BASE_SPEED = 14.5;
+      balls.forEach(b => {
+        b.color = COLOR_RED;
+        const toCenterAng = Math.atan2(CENTER.y - b.y, CENTER.x - b.x);
+        const randAng = toCenterAng + (Math.random() - 0.5) * 1.2;
+        const spd = BASE_SPEED + (Math.random() - 0.5) * 2;
+        b.vx = Math.cos(randAng) * spd;
+        b.vy = Math.sin(randAng) * spd;
+      });
+    }
 
-def generate_tts_intro():
-    chosen_phrase = random.choice(HOOK_PHRASES)
-    print(f"🎙️ Generant veu Edge-TTS: \"{chosen_phrase}\"")
+    function updatePhysics(dt) {
+      const SUB_STEPS = 6;
+      const stepDt = dt / SUB_STEPS;
 
-    temp_mp3 = "temp_tts.mp3"
-    temp_wav = "temp_tts.wav"
+      for (let s = 0; s < SUB_STEPS; s++) {
+        balls.forEach(ball => {
+          ball.x += ball.vx * stepDt;
+          ball.y += ball.vy * stepDt;
 
-    asyncio.run(_async_generate_voice(chosen_phrase, temp_mp3))
+          const dx = ball.x - CENTER.x;
+          const dy = ball.y - CENTER.y;
+          const dist = Math.hypot(dx, dy);
 
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-y",
-            "-i",
-            temp_mp3,
-            "-ar",
-            "44100",
-            "-ac",
-            "1",
-            temp_wav,
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+          if (dist >= ARENA_RADIUS - ball.radius) {
+            const nx = dx / (dist || 1);
+            const ny = dy / (dist || 1);
+            const dot = ball.vx * nx + ball.vy * ny;
 
-    tts_audio = None
-    if os.path.exists(temp_wav):
-        with wave.open(temp_wav, "rb") as wf:
-            n_frames = wf.getnframes()
-            data = wf.readframes(n_frames)
-            tts_audio = (
-                np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
-            )
+            if (dot > 0) {
+              const rx = ball.vx - 2 * dot * nx;
+              const ry = ball.vy - 2 * dot * ny;
+              const ang = Math.atan2(ry, rx) + (Math.random() - 0.5) * 0.08;
+              const spd = Math.hypot(rx, ry);
 
-        max_v = np.max(np.abs(tts_audio))
-        if max_v > 0:
-            tts_audio = tts_audio / max_v
+              ball.vx = Math.cos(ang) * spd;
+              ball.vy = Math.sin(ang) * spd;
+              ball.x = CENTER.x + nx * (ARENA_RADIUS - ball.radius);
+              ball.y = CENTER.y + ny * (ARENA_RADIUS - ball.radius);
+            }
+          }
+        });
 
-        os.remove(temp_wav)
+        for (let i = 0; i < balls.length; i++) {
+          for (let j = i + 1; j < balls.length; j++) {
+            const b1 = balls[i], b2 = balls[j];
+            const cdx = b2.x - b1.x;
+            const cdy = b2.y - b1.y;
+            const dist = Math.hypot(cdx, cdy);
+            const minDist = b1.radius + b2.radius;
 
-    if os.path.exists(temp_mp3):
-        os.remove(temp_mp3)
+            if (dist < minDist && dist > 0) {
+              const cnx = cdx / dist;
+              const cny = cdy / dist;
 
-    return tts_audio, chosen_phrase
+              const overlap = (minDist - dist) * 0.5;
+              b1.x -= cnx * overlap;
+              b1.y -= cny * overlap;
+              b2.x += cnx * overlap;
+              b2.y += cny * overlap;
 
+              const rvx = b1.vx - b2.vx;
+              const rvy = b1.vy - b2.vy;
+              const velNorm = rvx * cnx + rvy * cny;
 
-def load_random_meme_sound():
-    valid_exts = (".mp3", ".wav", ".ogg", ".m4a")
-    if not os.path.exists(ASSETS_AUDIO_DIR):
-        os.makedirs(ASSETS_AUDIO_DIR, exist_ok=True)
-        return None, None
+              if (velNorm > 0) {
+                b1.vx -= velNorm * cnx;
+                b1.vy -= velNorm * cny;
+                b2.vx += velNorm * cnx;
+                b2.vy += velNorm * cny;
+              }
+            }
+          }
+        }
+      }
+    }
 
-    audio_files = [
-        f for f in os.listdir(ASSETS_AUDIO_DIR) if f.lower().endswith(valid_exts)
-    ]
+    function assignFinalSlots() {
+      const available = [...slots];
+      const targetBall = balls.find(b => b.isTarget);
+      available.sort((a, b) => Math.hypot(targetBall.x - a.x, targetBall.y - a.y) - Math.hypot(targetBall.x - b.x, targetBall.y - b.y));
+      targetBall.targetSlot = available.shift();
+      targetBall.startX = targetBall.x;
+      targetBall.startY = targetBall.y;
 
-    if not audio_files:
-        return None, None
+      window.winnerName = targetBall.targetSlot.number.toString();
 
-    chosen_filename = random.choice(audio_files)
-    chosen_path = os.path.join(ASSETS_AUDIO_DIR, chosen_filename)
+      const otherBalls = balls.filter(b => !b.isTarget);
+      otherBalls.forEach(ball => {
+        available.sort((a, b) => Math.hypot(ball.x - a.x, ball.y - a.y) - Math.hypot(ball.x - b.x, ball.y - b.y));
+        ball.targetSlot = available.shift();
+        ball.startX = ball.x;
+        ball.startY = ball.y;
+      });
+    }
 
-    temp_wav = "temp_meme.wav"
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-y",
-            "-i",
-            chosen_path,
-            "-ar",
-            "44100",
-            "-ac",
-            "1",
-            temp_wav,
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    function easeInOutCubic(t) {
+      return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    }
 
-    if not os.path.exists(temp_wav):
-        return None, None
+    // ============================================================
+    // 3. RENDERITZAT
+    // ============================================================
+    let lastTime = null;
 
-    with wave.open(temp_wav, "rb") as wf:
-        n_frames = wf.getnframes()
-        data = wf.readframes(n_frames)
-        meme_audio = (
-            np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
-        )
+    function render(currentTime) {
+      if (!startTime) startTime = currentTime;
+      if (!lastTime) lastTime = currentTime;
+      const elapsed = (currentTime - startTime) / 1000;
+      const dt = Math.min((currentTime - lastTime) / 1000, 0.05);
+      lastTime = currentTime;
 
-    if os.path.exists(temp_wav):
-        os.remove(temp_wav)
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
-    return meme_audio, chosen_filename
+      // Títol
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.font = '800 52px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      
+      const titlePrefix = "Don't lose the ";
+      const titleHighlight = "red ball";
+      const totalWidth = ctx.measureText(titlePrefix).width + ctx.measureText(titleHighlight).width;
+      const startX = CENTER.x - totalWidth / 2;
 
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'left';
+      ctx.fillText(titlePrefix, startX, 330);
+      ctx.fillStyle = COLOR_RED;
+      ctx.fillText(titleHighlight, startX + ctx.measureText(titlePrefix).width, 330);
+      ctx.restore();
 
-def synthesize_soundtrack(
-    sound_events,
-    duration_sec,
-    meme_audio=None,
-    tts_audio=None,
-    output_wav="audio.wav",
-):
-    SAMPLE_RATE = 44100
-    total_samples = int((duration_sec + 1.5) * SAMPLE_RATE)
-    audio_data = np.zeros(total_samples, dtype=np.float32)
+      // Marca d'aigua
+      ctx.font = '600 32px sans-serif';
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.22)';
+      ctx.textAlign = 'center';
+      ctx.fillText('@bouncelab.tv', CENTER.x, 1680);
 
-    tts_start_sample = int(0.15 * SAMPLE_RATE)
-    if tts_audio is not None and len(tts_audio) > 0:
-        n_tts = min(len(tts_audio), total_samples - tts_start_sample)
-        audio_data[tts_start_sample : tts_start_sample + n_tts] += (
-            tts_audio[:n_tts] * 2.2
-        )
+      // Arena circular
+      ctx.save();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(CENTER.x, CENTER.y, ARENA_RADIUS, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
 
-    for ev in sound_events:
-        t_sec = ev.get("time", 0)
-        is_reveal = ev.get("isEscape", False)
+      if (isRunning) {
+        if (elapsed < 3.0) {
+          // FASE 1: COUNTDOWN 3..2..1
+          const countdown = Math.ceil(3.0 - elapsed);
+          if (countdown !== lastTickSecond) {
+            lastTickSecond = countdown;
+            recordSound('tick', countdown);
+          }
 
-        start_sample = int(t_sec * SAMPLE_RATE)
-        if start_sample >= total_samples:
-            continue
+          ctx.save();
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
+          ctx.font = '900 250px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(countdown.toString(), CENTER.x, CENTER.y);
+          ctx.restore();
 
-        if is_reveal and meme_audio is not None:
-            n_samples = min(len(meme_audio), total_samples - start_sample)
-            audio_data[start_sample : start_sample + n_samples] += (
-                meme_audio[:n_samples] * 0.95
-            )
-        elif is_reveal:
-            note_len = 1.2
-            n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
-            t = np.linspace(0, note_len, n_samples, False)
-            chord = (
-                0.5 * np.sin(2 * np.pi * 523.25 * t)
-                + 0.4 * np.sin(2 * np.pi * 659.25 * t)
-                + 0.5 * np.sin(2 * np.pi * 783.99 * t)
-                + 0.4 * np.sin(2 * np.pi * 1046.50 * t)
-            ) * np.exp(-3.5 * t)
-            audio_data[start_sample : start_sample + n_samples] += chord
-        else:
-            note_len = 0.05
-            n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
-            t = np.linspace(0, note_len, n_samples, False)
-            click = (
-                np.sin(2 * np.pi * 1200 * t) * 0.5
-                + np.sin(2 * np.pi * 600 * t) * 0.3
-            ) * np.exp(-70 * t)
-            audio_data[start_sample : start_sample + n_samples] += click * 0.45
+          ctx.save();
+          ctx.fillStyle = '#ffffff';
+          ctx.font = '700 32px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          slots.forEach(s => ctx.fillText(s.number.toString(), s.textX, s.textY));
+          ctx.restore();
 
-    max_amp = np.max(np.abs(audio_data))
-    if max_amp > 0:
-        audio_int16 = (audio_data / max_amp * 31500).astype(np.int16)
-    else:
-        audio_int16 = (audio_data * 31500).astype(np.int16)
+          const targetBall = balls.find(b => b.isTarget);
+          if (targetBall) {
+            ctx.save();
+            ctx.fillStyle = '#ffffff';
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 3;
+            ctx.textAlign = 'center';
+            ctx.font = '800 24px sans-serif';
 
-    with wave.open(output_wav, "w") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(SAMPLE_RATE)
-        wf.writeframes(audio_int16.tobytes())
+            const dirX = Math.cos(slots[targetSlotIndex].angle);
+            const dirY = Math.sin(slots[targetSlotIndex].angle);
+            const arrowX = targetBall.x + dirX * 65;
+            const arrowY = targetBall.y + dirY * 65;
 
-    print(f"🎵 Àudio sintetitzat correctament ({duration_sec:.1f}s).")
+            ctx.beginPath();
+            ctx.moveTo(arrowX, arrowY);
+            ctx.lineTo(targetBall.x + dirX * 32, targetBall.y + dirY * 32);
+            ctx.stroke();
 
+            ctx.fillText('FOLLOW THE BALL', arrowX + dirX * 130, arrowY + dirY * 30);
+            ctx.restore();
+          }
 
-def resolve_simulation_url():
-    possible_candidates = [
-        f"{SELECTED_MODE}.html",
-        os.path.join("simulators", f"{SELECTED_MODE}.html"),
-        "battle.html",
-        os.path.join("simulators", "battle.html"),
-    ]
+        } else if (elapsed < 18.0) {
+          // FASE 2: SHUFFLING 15s
+          if (lastTickSecond === -1 || lastTickSecond > 15) {
+            initShufflePhysics();
+          }
 
-    for rel_path in possible_candidates:
-        full_path = os.path.join(BASE_DIR, rel_path)
-        if os.path.exists(full_path):
-            web_path = rel_path.replace("\\", "/")
-            print(f"📄 Fitxer HTML trobat: {web_path}")
-            return f"http://localhost:{PORT}/{web_path}"
+          const timeLeft = Math.max(1, Math.ceil(18.0 - elapsed));
+          if (timeLeft !== lastTickSecond) {
+            lastTickSecond = timeLeft;
+            recordSound('tick', timeLeft);
+          }
 
-    all_files = os.listdir(BASE_DIR)
-    raise FileNotFoundError(
-        f"❌ No s'ha trobat {SELECTED_MODE}.html ni cap fitxer alternatiu a {BASE_DIR}. "
-        f"Fitxers existents: {all_files}"
-    )
+          ctx.save();
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.13)';
+          ctx.font = '900 250px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(timeLeft.toString(), CENTER.x, CENTER.y);
+          ctx.restore();
 
+          updatePhysics(dt);
 
-def run():
-    start_local_server()
-    meme_audio, meme_name = load_random_meme_sound()
-    tts_audio, tts_phrase = generate_tts_intro()
+        } else if (elapsed < 19.8) {
+          // FASE 3: RETORN SUAU I NÚMEROS
+          if (!slotAssigned) {
+            assignFinalSlots();
+            slotAssigned = true;
+          }
 
-    sim_url = resolve_simulation_url()
+          const progress = Math.min(1.0, (elapsed - 18.0) / 1.3);
+          const eased = easeInOutCubic(progress);
 
-    with sync_playwright() as p:
-        print("Iniciant Firefox en mode headless...")
-        browser = p.firefox.launch(headless=True)
+          balls.forEach(b => {
+            b.x = b.startX + (b.targetSlot.x - b.startX) * eased;
+            b.y = b.startY + (b.targetSlot.y - b.startY) * eased;
+          });
 
-        context = browser.new_context(
-            viewport={"width": 1080, "height": 1920},
-            accept_downloads=True,
-        )
+          const numRevealProgress = Math.min(NUM_BALLS, Math.floor(((elapsed - 18.1) / 1.4) * NUM_BALLS));
+          ctx.save();
+          ctx.fillStyle = '#ffffff';
+          ctx.font = '700 32px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
 
-        page = context.new_page()
+          for (let i = 0; i < numRevealProgress; i++) {
+            ctx.fillText(slots[i].number.toString(), slots[i].textX, slots[i].textY);
+          }
+          ctx.restore();
 
-        print(f"Carregant simulador ({sim_url})...")
-        response = page.goto(sim_url, wait_until="load")
-        if response and response.status >= 400:
-            raise RuntimeError(f"Error HTTP {response.status} en carregar {sim_url}!")
+        } else {
+          // FASE 4: REVELACIÓ
+          ctx.save();
+          ctx.fillStyle = '#ffffff';
+          ctx.font = '700 32px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          slots.forEach(s => ctx.fillText(s.number.toString(), s.textX, s.textY));
+          ctx.restore();
 
-        page.wait_for_timeout(1000)
+          balls.forEach(b => {
+            b.x = b.targetSlot.x;
+            b.y = b.targetSlot.y;
+            b.color = b.isTarget ? COLOR_RED : COLOR_BLUE;
+          });
 
-        is_ready = page.evaluate("typeof window.startRecording === 'function'")
-        if not is_ready:
-            raise RuntimeError("window.startRecording no està definida al fitxer HTML!")
+          const winningBall = balls.find(b => b.isTarget);
 
-        raw_video = "raw_simulation.webm"
+          if (!revealDone) {
+            revealDone = true;
+            recordSound('reveal', 10);
+          }
 
-        with page.expect_download(timeout=120000) as download_info:
-            print("Enregistrant repte visual (~21.5s)...")
-            page.evaluate("window.startRecording()")
+          if (winningBall) {
+            ctx.save();
+            ctx.fillStyle = '#ffffff';
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 4;
+            
+            const dirX = Math.cos(winningBall.targetSlot.angle);
+            const dirY = Math.sin(winningBall.targetSlot.angle);
+            const arrowStartX = winningBall.x + dirX * 105;
+            const arrowStartY = winningBall.y + dirY * 105;
+            const arrowEndX = winningBall.x + dirX * 40;
+            const arrowEndY = winningBall.y + dirY * 40;
 
-        sound_events = page.evaluate("window.soundEvents || []")
-        actual_duration = page.evaluate("window.actualDuration || 21.5")
-        winner_number = page.evaluate("window.winnerName || '?'")
+            ctx.beginPath();
+            ctx.moveTo(arrowStartX, arrowStartY);
+            ctx.lineTo(arrowEndX, arrowEndY);
+            ctx.stroke();
 
-        download = download_info.value
-        download.save_as(raw_video)
-        print(f"Repte completat! Número guanyador: #{winner_number} ({actual_duration:.1f}s).")
-        browser.close()
+            const headlen = 16;
+            const angle = Math.atan2(arrowEndY - arrowStartY, arrowEndX - arrowStartX);
+            ctx.beginPath();
+            ctx.moveTo(arrowEndX, arrowEndY);
+            ctx.lineTo(arrowEndX - headlen * Math.cos(angle - Math.PI / 6), arrowEndY - headlen * Math.sin(angle - Math.PI / 6));
+            ctx.lineTo(arrowEndX - headlen * Math.cos(angle + Math.PI / 6), arrowEndY - headlen * Math.sin(angle + Math.PI / 6));
+            ctx.fillStyle = '#ffffff';
+            ctx.fill();
+            ctx.restore();
+          }
 
-    audio_file = "simulation_audio.wav"
-    synthesize_soundtrack(
-        sound_events, actual_duration, meme_audio, tts_audio, audio_file
-    )
+          if (elapsed > 21.5 && mediaRecorder && mediaRecorder.state !== 'inactive' && !isFinished) {
+            isFinished = true;
+            window.actualDuration = elapsed;
+            mediaRecorder.stop();
+          }
+        }
+      }
 
-    final_mp4 = "bouncelab_video.mp4"
-    print("Empaquetant MP4 a 30 FPS...")
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-y",
-            "-i",
-            raw_video,
-            "-i",
-            audio_file,
-            "-c:v",
-            "libx264",
-            "-preset",
-            "fast",
-            "-r",
-            "30",
-            "-vsync",
-            "cfr",
-            "-pix_fmt",
-            "yuv420p",
-            "-crf",
-            "26",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "128k",
-            "-shortest",
-            final_mp4,
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+      // Dibuixar boles
+      balls.forEach(ball => {
+        ctx.save();
+        ctx.fillStyle = ball.color;
+        ctx.beginPath();
+        ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      });
 
-    file_size_mb = os.path.getsize(final_mp4) / (1024 * 1024)
-    print(f"📦 Mida final del vídeo: {file_size_mb:.2f} MB")
+      requestAnimationFrame(render);
+    }
 
-    for tmp in [raw_video, audio_file]:
-        if os.path.exists(tmp):
-            os.remove(tmp)
+    // ============================================================
+    // 4. MEDIARECORDER
+    // ============================================================
+    let mediaRecorder;
+    let recordedChunks = [];
 
-    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID and os.path.exists(final_mp4):
-        print("Enviant el vídeo per Telegram...")
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVideo"
-        caption_text = (
-            f"🎯 [DON'T LOSE THE RED BALL]\n"
-            f"🎙️ Hook: \"{tts_phrase}\"\n"
-            f"👀 Has aconseguit no perdre-la?\n"
-            f"🏆 Resposta correcta: Bola #{winner_number}!\n"
-            f"⏱️ Durada: {actual_duration:.1f}s\n"
-            f"📦 Pes: {file_size_mb:.1f} MB\n"
-            f"Canal: @bouncelab.tv 🚀"
-        )
+    window.startRecording = function() {
+      startTime = performance.now();
+      isRunning = true;
+      window.soundEvents = [];
+      recordedChunks = [];
 
-        with open(final_mp4, "rb") as f:
-            res = requests.post(
-                url,
-                data={
-                    "chat_id": TELEGRAM_CHAT_ID,
-                    "caption": caption_text,
-                    "supports_streaming": True,
-                },
-                files={"video": f},
-                timeout=240,
-            )
-            if res.status_code == 200:
-                print("🎉 VÍDEO ENVIAT AMB ÈXIT A TELEGRAM!")
-            else:
-                print(f"Error Telegram: {res.text}")
+      const stream = canvas.captureStream(30);
 
+      let mimeType = 'video/webm;codecs=vp8';
+      if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
+        mimeType = 'video/webm;codecs=vp9';
+      } else if (MediaRecorder.isTypeSupported('video/webm')) {
+        mimeType = 'video/webm';
+      }
 
-if __name__ == "__main__":
-    run()
+      mediaRecorder = new MediaRecorder(stream, {
+        mimeType: mimeType,
+        videoBitsPerSecond: 4500000
+      });
+
+      mediaRecorder.ondataavailable = e => {
+        if (e.data.size > 0) recordedChunks.push(e.data);
+      };
+
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(recordedChunks, { type: 'video/webm' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        a.download = 'simulation.webm';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      };
+
+      mediaRecorder.start();
+
+      setTimeout(() => {
+        if (mediaRecorder.state !== 'inactive') {
+          window.actualDuration = (performance.now() - startTime) / 1000;
+          mediaRecorder.stop();
+        }
+      }, 23000);
+    };
+
+    requestAnimationFrame(render);
+  </script>
+</body>
+</html>
