@@ -27,7 +27,7 @@
 
   <script>
     // ==========================================
-    // 0. CONFIGURACIÓ I PARÀMETRES
+    // 0. CONFIGURACIÓ GENERAL
     // ==========================================
     const urlParams = new URLSearchParams(window.location.search);
     const RECORD_DURATION = parseInt(urlParams.get('duration') || '18', 10);
@@ -38,50 +38,51 @@
     const CENTER = { x: WIDTH / 2, y: HEIGHT / 2 };
 
     // ==========================================
-    // 1. SINTETITZADOR D'ÀUDIO (Web Audio API)
+    // 1. SINTETITZADOR D'ÀUDIO PENTATÒNIC
     // ==========================================
     const AudioContext = window.AudioContext || window.webkitAudioContext;
     const audioCtx = new AudioContext();
     const audioDest = audioCtx.createMediaStreamDestination();
 
-    // Escala pentatònica menor harmònica (Hz)
-    const NOTES = [261.63, 293.66, 329.63, 392.00, 440.00, 523.25, 587.33, 659.25, 783.99, 880.00];
+    // Notes harmòniques estil marimba
+    const PENTATONIC = [261.63, 293.66, 329.63, 392.00, 440.00, 523.25, 587.33, 659.25, 783.99, 880.00, 1046.50];
 
-    function playNote(freqIndex, isEscape = false) {
-      if (audioCtx.state === 'suspended') {
-        audioCtx.resume();
-      }
+    function playNote(index, isEscape = false) {
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+
       const osc = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
 
-      const freq = isEscape ? 987.77 : (NOTES[freqIndex % NOTES.length] || 440);
+      const freq = isEscape ? 1174.66 : (PENTATONIC[index % PENTATONIC.length] || 523.25);
       osc.type = isEscape ? 'triangle' : 'sine';
       osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
 
-      // Envolupant percussiva (marimba/campana)
-      gain.gain.setValueAtTime(0.4, audioCtx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + (isEscape ? 0.6 : 0.25));
+      // Cop sec i percussiu
+      const duration = isEscape ? 0.45 : 0.18;
+      gain.gain.setValueAtTime(0.5, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + duration);
 
       osc.connect(gain);
       gain.connect(audioCtx.destination);
       gain.connect(audioDest);
 
       osc.start();
-      osc.stop(audioCtx.currentTime + (isEscape ? 0.6 : 0.25));
+      osc.stop(audioCtx.currentTime + duration);
     }
 
     // ==========================================
-    // 2. FÍSICA I ESTATS DEL JOC
+    // 2. FÍSICA RÀPIDA I DINÀMICA (VIRAL STYLE)
     // ==========================================
-    const GRAVITY = 0.38;
-    const BOUNCE_FORCE = 1.01;
-    const BALL_RADIUS = 22;
+    const GRAVITY = 0.55;            // Gravetat viva
+    const BOUNCE_ACCEL = 1.018;      // La bola es fa més ràpida a cada rebot
+    const MAX_SPEED = 38;            // Límit de velocitat màxima per mantenir control
+    const BALL_RADIUS = 20;
 
     let ball = {
       x: CENTER.x,
-      y: CENTER.y - 80,
-      vx: (Math.random() - 0.5) * 12,
-      vy: (Math.random() - 0.5) * 8,
+      y: CENTER.y - 70,
+      vx: (Math.random() > 0.5 ? 1 : -1) * (14 + Math.random() * 6), // Sortida ràpida
+      vy: -12,
       trail: []
     };
 
@@ -91,109 +92,145 @@
     let rings = [];
 
     for (let i = 0; i < RING_COUNT; i++) {
-      const hue = (i * 55) % 360;
+      const hue = (i * 55 + 20) % 360;
       rings.push({
         radius: BASE_RADIUS + i * SPACING,
         gapAngle: Math.random() * Math.PI * 2,
-        gapSize: 0.75, // Radians (~43 graus)
-        speed: (Math.random() > 0.5 ? 1 : -1) * (0.015 + i * 0.005),
+        gapSize: 0.70, // Obertura de ~40 graus
+        speed: (Math.random() > 0.5 ? 1 : -1) * (0.024 + i * 0.006),
         hue: hue,
         color: `hsl(${hue}, 100%, 65%)`,
-        alive: true
+        alive: true,
+        flash: 0 // Flaix neó en rebre xoc
       });
     }
 
     let particles = [];
 
-    function createParticles(x, y, hue) {
-      for (let i = 0; i < 40; i++) {
+    function spawnBurst(x, y, hue) {
+      for (let i = 0; i < 45; i++) {
         const ang = Math.random() * Math.PI * 2;
-        const spd = 4 + Math.random() * 10;
+        const spd = 6 + Math.random() * 14;
         particles.push({
-          x: x,
-          y: y,
+          x, y,
           vx: Math.cos(ang) * spd,
           vy: Math.sin(ang) * spd,
-          life: 30,
-          color: `hsl(${hue}, 100%, 70%)`
+          life: 35,
+          color: `hsl(${hue}, 100%, 75%)`
         });
       }
     }
 
     // ==========================================
-    // 3. ACTUALITZACIÓ FÍSICA I RENDERITZAT
+    // 3. MOTOR DE COL·LISIÓ SENSE TUNNELING
     // ==========================================
     function updatePhysics() {
-      // Sub-stepping de 4 passos per evitar que la pilota travessi parets a alta velocitat
-      const STEPS = 4;
-      for (let s = 0; s < STEPS; s++) {
-        ball.vy += GRAVITY / STEPS;
-        ball.x += ball.vx / STEPS;
-        ball.y += ball.vy / STEPS;
+      // 8 sub-passos per fotograma: precisió absoluta a altes velocitats
+      const SUB_STEPS = 8;
+
+      for (let s = 0; s < SUB_STEPS; s++) {
+        ball.vy += GRAVITY / SUB_STEPS;
+        ball.x += ball.vx / SUB_STEPS;
+        ball.y += ball.vy / SUB_STEPS;
+
+        // Limitar velocitat màxima si s'accelera massa
+        const currentSpeed = Math.hypot(ball.vx, ball.vy);
+        if (currentSpeed > MAX_SPEED) {
+          ball.vx = (ball.vx / currentSpeed) * MAX_SPEED;
+          ball.vy = (ball.vy / currentSpeed) * MAX_SPEED;
+        }
 
         const dx = ball.x - CENTER.x;
         const dy = ball.y - CENTER.y;
         const dist = Math.hypot(dx, dy);
-        let angle = Math.atan2(dy, dx);
-        if (angle < 0) angle += Math.PI * 2;
+
+        // Vector normal cap enfora
+        const nx = dx / (dist || 1);
+        const ny = dy / (dist || 1);
+
+        // Angle d'impacte respecte al centre (0 a 2*PI)
+        let hitAngle = Math.atan2(dy, dx);
+        if (hitAngle < 0) hitAngle += Math.PI * 2;
 
         rings.forEach((ring, idx) => {
           if (!ring.alive) return;
 
-          if (Math.abs(dist - ring.radius) <= BALL_RADIUS + 4) {
-            let gStart = (ring.gapAngle - ring.gapSize / 2) % (Math.PI * 2);
-            let gEnd = (ring.gapAngle + ring.gapSize / 2) % (Math.PI * 2);
-            if (gStart < 0) gStart += Math.PI * 2;
-            if (gEnd < 0) gEnd += Math.PI * 2;
+          // La pilota es troba a l'anell
+          const contactDist = ring.radius;
+          const isTouching = Math.abs(dist - contactDist) <= BALL_RADIUS;
 
-            const inGap = (gStart < gEnd)
-              ? (angle >= gStart && angle <= gEnd)
-              : (angle >= gStart || angle <= gEnd);
+          if (isTouching) {
+            // Càlcul de distància angular més curta a l'obertura (sense errors de 360 graus)
+            let diff = Math.abs(hitAngle - ring.gapAngle) % (Math.PI * 2);
+            if (diff > Math.PI) diff = Math.PI * 2 - diff;
+
+            const inGap = diff <= (ring.gapSize / 2);
 
             if (inGap) {
+              // ESCAPAT: Es trenca l'anell
               ring.alive = false;
               playNote(idx, true);
-              createParticles(ball.x, ball.y, ring.hue);
+              spawnBurst(ball.x, ball.y, ring.hue);
             } else {
-              // Rebot elàstic
-              const nx = dx / dist;
-              const ny = dy / dist;
+              // REBOT OBLIGATORI (Clamping de posició per evitar tunneling)
               const dot = ball.vx * nx + ball.vy * ny;
-              ball.vx = (ball.vx - 2 * dot * nx) * BOUNCE_FORCE;
-              ball.vy = (ball.vy - 2 * dot * ny) * BOUNCE_FORCE;
 
-              const overlap = (BALL_RADIUS + 4) - Math.abs(dist - ring.radius);
-              ball.x -= nx * (dist > ring.radius ? overlap : -overlap);
-              ball.y -= ny * (dist > ring.radius ? overlap : -overlap);
+              // Si va cap enfora xocant des de dins:
+              if (dist < contactDist && dot > 0) {
+                ball.vx = (ball.vx - 2 * dot * nx) * BOUNCE_ACCEL;
+                ball.vy = (ball.vy - 2 * dot * ny) * BOUNCE_ACCEL;
+                // FIXACIÓ DE POSICIÓ: La bola no pot traspassar la paret
+                ball.x = CENTER.x + nx * (contactDist - BALL_RADIUS);
+                ball.y = CENTER.y + ny * (contactDist - BALL_RADIUS);
 
-              playNote(idx, false);
+                ring.flash = 1.0;
+                playNote(idx, false);
+              }
+              // Si va cap endins xocant des de fora:
+              else if (dist >= contactDist && dot < 0) {
+                ball.vx = (ball.vx - 2 * dot * nx) * BOUNCE_ACCEL;
+                ball.vy = (ball.vy - 2 * dot * ny) * BOUNCE_ACCEL;
+                ball.x = CENTER.x + nx * (contactDist + BALL_RADIUS);
+                ball.y = CENTER.y + ny * (contactDist + BALL_RADIUS);
+
+                ring.flash = 1.0;
+                playNote(idx, false);
+              }
             }
           }
         });
       }
 
-      // Rotació d'anells
+      // Actualitzar rotació d'anells i efecte de flash
       rings.forEach(r => {
-        if (r.alive) r.gapAngle = (r.gapAngle + r.speed) % (Math.PI * 2);
+        if (r.alive) {
+          r.gapAngle = (r.gapAngle + r.speed) % (Math.PI * 2);
+          if (r.flash > 0) r.flash -= 0.05;
+        }
       });
 
-      // Rastre de la pilota
+      // Estela
       ball.trail.push({ x: ball.x, y: ball.y });
-      if (ball.trail.length > 20) ball.trail.shift();
+      if (ball.trail.length > 16) ball.trail.shift();
     }
 
+    // ==========================================
+    // 4. RENDERITZAT VISUAL NEÓ
+    // ==========================================
     function render() {
-      ctx.fillStyle = '#05070e';
+      ctx.fillStyle = '#030712';
       ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
-      // Anells amb resplendor Neó
+      // Dibuixar Anells
       rings.forEach(ring => {
         if (!ring.alive) return;
         ctx.save();
-        ctx.shadowBlur = 18;
-        ctx.shadowColor = ring.color;
-        ctx.strokeStyle = ring.color;
-        ctx.lineWidth = 10;
+
+        const glowSize = ring.flash > 0 ? 30 : 15;
+        ctx.shadowBlur = glowSize;
+        ctx.shadowColor = ring.flash > 0 ? '#ffffff' : ring.color;
+        ctx.strokeStyle = ring.flash > 0 ? '#ffffff' : ring.color;
+        ctx.lineWidth = ring.flash > 0 ? 12 : 9;
         ctx.lineCap = 'round';
 
         ctx.beginPath();
@@ -204,12 +241,12 @@
         ctx.restore();
       });
 
-      // Estela
+      // Estela de la pilota
       ball.trail.forEach((pt, i) => {
         const alpha = (i + 1) / ball.trail.length;
-        ctx.fillStyle = `rgba(255, 255, 255, ${alpha * 0.4})`;
+        ctx.fillStyle = `rgba(255, 255, 255, ${alpha * 0.35})`;
         ctx.beginPath();
-        ctx.arc(pt.x, pt.y, BALL_RADIUS * alpha * 0.7, 0, Math.PI * 2);
+        ctx.arc(pt.x, pt.y, BALL_RADIUS * alpha * 0.75, 0, Math.PI * 2);
         ctx.fill();
       });
 
@@ -220,12 +257,12 @@
         p.life--;
         ctx.fillStyle = p.color;
         ctx.beginPath();
-        ctx.arc(p.x, p.y, Math.max(1, p.life / 5), 0, Math.PI * 2);
+        ctx.arc(p.x, p.y, Math.max(1, p.life / 4), 0, Math.PI * 2);
         ctx.fill();
       });
       particles = particles.filter(p => p.life > 0);
 
-      // Pilota
+      // Pilota brillant
       ctx.save();
       ctx.shadowBlur = 25;
       ctx.shadowColor = '#ffffff';
@@ -235,33 +272,38 @@
       ctx.fill();
       ctx.restore();
 
-      // Marca d'aigua pròpia
+      // Marca d'aigua pròpia al centre
       ctx.font = '600 32px sans-serif';
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.22)';
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.20)';
       ctx.textAlign = 'center';
       ctx.fillText('bouncelab.tv', CENTER.x, CENTER.y + 12);
 
-      // Ganxo de text superior
-      ctx.font = '800 58px sans-serif';
+      // Ganxo de text superior estil TikTok
+      ctx.font = '800 60px sans-serif';
       ctx.fillStyle = '#ffffff';
-      ctx.shadowBlur = 15;
-      ctx.shadowColor = 'rgba(255, 255, 255, 0.5)';
+      ctx.shadowBlur = 18;
+      ctx.shadowColor = 'rgba(255, 255, 255, 0.6)';
       ctx.fillText('WILL IT ESCAPE?', CENTER.x, 260);
+
+      // Comptador d'anells restants inferior
+      const remaining = rings.filter(r => r.alive).length;
+      ctx.font = '700 36px sans-serif';
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+      ctx.shadowBlur = 0;
+      ctx.fillText(`WALLS LEFT: ${remaining}`, CENTER.x, HEIGHT - 240);
 
       updatePhysics();
       requestAnimationFrame(render);
     }
 
     // ==========================================
-    // 4. GRAVADOR INTEGRAT (MediaRecorder)
+    // 5. GRAVACIÓ AUTOMÀTICA
     // ==========================================
     let mediaRecorder;
     let recordedChunks = [];
 
     window.startRecording = function() {
-      if (audioCtx.state === 'suspended') {
-        audioCtx.resume();
-      }
+      if (audioCtx.state === 'suspended') audioCtx.resume();
 
       recordedChunks = [];
       const canvasStream = canvas.captureStream(60);
@@ -271,7 +313,6 @@
         ...audioStream.getAudioTracks()
       ]);
 
-      // Selecció de còdec compatible amb el navegador
       let mimeType = 'video/webm;codecs=vp8,opus';
       if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')) {
         mimeType = 'video/webm;codecs=vp9,opus';
@@ -301,18 +342,14 @@
       };
 
       mediaRecorder.start();
-      console.log('GRAVACIÓ INICIADA');
 
-      // Finalització automàtica quan acaba la durada
       setTimeout(() => {
         if (mediaRecorder.state !== 'inactive') {
           mediaRecorder.stop();
-          console.log('GRAVACIÓ FINALITZADA');
         }
       }, RECORD_DURATION * 1000);
     };
 
-    // Arrencar la simulació visual
     render();
   </script>
 </body>
