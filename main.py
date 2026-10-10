@@ -25,7 +25,6 @@ def start_local_server():
     print(f"Servidor web local actiu a http://localhost:{PORT}")
 
 
-# Carrega un so mem aleatori de la carpeta assets/audio (si n'hi ha)
 def load_random_meme_sound():
     valid_exts = (".mp3", ".wav", ".ogg", ".m4a")
     if not os.path.exists(ASSETS_AUDIO_DIR):
@@ -44,7 +43,6 @@ def load_random_meme_sound():
     chosen_path = os.path.join(ASSETS_AUDIO_DIR, chosen_filename)
     print(f"🎲 Mem triat per a aquest vídeo: {chosen_filename}")
 
-    # Convertir l'àudio a PCM mono 44.1kHz net amb FFmpeg
     temp_wav = "temp_meme.wav"
     subprocess.run(
         [
@@ -106,15 +104,12 @@ def synthesize_soundtrack(
         if start_sample >= total_samples:
             continue
 
-        # QUAN SE SUPERA UN CERCLE (ESCAPE)
         if is_escape and meme_audio is not None:
-            # Reproduir el mem seleccionat
             n_samples = min(len(meme_audio), total_samples - start_sample)
             audio_data[start_sample : start_sample + n_samples] += (
                 meme_audio[:n_samples] * 0.95
             )
         else:
-            # So percussiu de marimba per defecte
             freq = (
                 1174.66
                 if is_escape
@@ -157,8 +152,6 @@ def synthesize_soundtrack(
 
 def run():
     start_local_server()
-
-    # Seleccionar mem aleatori d'assets/audio/
     meme_audio, meme_name = load_random_meme_sound()
 
     with sync_playwright() as p:
@@ -173,13 +166,20 @@ def run():
         page = context.new_page()
 
         sim_url = f"http://localhost:{PORT}/simulator.html"
-        print("Carregant simulador...")
+        print("Carregant simulador i resolent pre-simulació...")
         page.goto(sim_url, wait_until="load")
         page.wait_for_timeout(1000)
 
+        # Llegir configuració generada
+        col1 = page.evaluate("window.color1Name || 'PILOTA 1'")
+        col2 = page.evaluate("window.color2Name || 'PILOTA 2'")
+        rings_cnt = page.evaluate("window.ringCount || 4")
+        print(f"🎮 Duel generat: {col1} vs {col2} amb {rings_cnt} anells!")
+
         raw_video = "raw_simulation.webm"
 
-        with page.expect_download(timeout=90000) as download_info:
+        # Timeout de 120 segons per permetre partides de fins a 1.5 minuts sense talls
+        with page.expect_download(timeout=120000) as download_info:
             print("Iniciant duel i gravació...")
             page.evaluate("window.startRecording()")
 
@@ -194,11 +194,9 @@ def run():
         )
         browser.close()
 
-    # Generar pista d'àudio integrant el mem a cada cercle superat
     audio_file = "simulation_audio.wav"
     synthesize_soundtrack(sound_events, actual_duration, meme_audio, audio_file)
 
-    # Empaquetar MP4
     final_mp4 = "bouncelab_video.mp4"
     print("Empaquetant MP4 final amb FFmpeg...")
     subprocess.run(
@@ -232,13 +230,13 @@ def run():
         if os.path.exists(tmp):
             os.remove(tmp)
 
-    # Enviar a Telegram
+    # Enviar a Telegram amb tots els detalls
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID and os.path.exists(final_mp4):
         print("Enviant el vídeo per Telegram...")
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVideo"
         meme_caption = f"\n🔊 So mem: {meme_name}" if meme_name else ""
         caption_text = (
-            f"🎬 Duel finalitzat!\n"
+            f"🎬 Duel: {col1} vs {col2} ({rings_cnt} anells)!\n"
             f"🏆 Guanyador: {winner_name}!\n"
             f"⏱️ Durada: {actual_duration:.1f}s{meme_caption}\n"
             f"Canal: @bouncelab.tv 🔥"
@@ -253,7 +251,7 @@ def run():
                     "supports_streaming": True,
                 },
                 files={"video": f},
-                timeout=180,
+                timeout=240,
             )
             if res.status_code == 200:
                 print("🎉 VÍDEO ENVIAT AMB ÈXIT A TELEGRAM!")
