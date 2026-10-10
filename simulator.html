@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>BounceLab Simulator</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background-color: #030712;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    canvas {
+      width: auto;
+      height: 100vh;
+      aspect-ratio: 9 / 16;
+      box-shadow: 0 0 50px rgba(0, 0, 0, 0.9);
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas" width="1080" height="1920"></canvas>
+
+  <script>
+    // PARÀMETRES DE LA URL (ex: ?duration=18)
+    const urlParams = new URLSearchParams(window.location.search);
+    const RECORD_DURATION = parseInt(urlParams.get('duration') || '18', 10);
+
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const WIDTH = 1080, HEIGHT = 1920;
+    const CENTER = { x: WIDTH / 2, y: HEIGHT / 2 };
+
+    // ==========================================
+    // 1. SINTETITZADOR D'ÀUDIO (Web Audio API)
+    // ==========================================
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    const audioCtx = new AudioContext();
+    const audioDest = audioCtx.createMediaStreamDestination();
+
+    // Escala pentatònica menor harmònica (frecuencias en Hz)
+    const NOTES = [261.63, 293.66, 329.63, 392.00, 440.00, 523.25, 587.33, 659.25, 783.99, 880.00];
+
+    function playNote(freqIndex, isEscape = false) {
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+
+      const freq = isEscape ? 987.77 : (NOTES[freqIndex % NOTES.length] || 440);
+      osc.type = isEscape ? 'triangle' : 'sine';
+      osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+
+      // Envolupant percussiva (marimba/campana)
+      gain.gain.setValueAtTime(0.4, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + (isEscape ? 0.6 : 0.25));
+
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      gain.connect(audioDest);
+
+      osc.start();
+      osc.stop(audioCtx.currentTime + (isEscape ? 0.6 : 0.25));
+    }
+
+    // ==========================================
+    // 2. FÍSICA I ESTATS DEL JOC
+    // ==========================================
+    const GRAVITY = 0.38;
+    const BOUNCE_FORCE = 1.01;
+    const BALL_RADIUS = 22;
+
+    let ball = {
+      x: CENTER.x,
+      y: CENTER.y - 80,
+      vx: (Math.random() - 0.5) * 12,
+      vy: (Math.random() - 0.5) * 8,
+      trail: []
+    };
+
+    const RING_COUNT = 5;
+    const BASE_RADIUS = 180;
+    const SPACING = 75;
+    let rings = [];
+
+    for (let i = 0; i < RING_COUNT; i++) {
+      const hue = (i * 55) % 360;
+      rings.push({
+        radius: BASE_RADIUS + i * SPACING,
+        gapAngle: Math.random() * Math.PI * 2,
+        gapSize: 0.75, // Radians (~43 graus)
+        speed: (Math.random() > 0.5 ? 1 : -1) * (0.015 + i * 0.005),
+        hue: hue,
+        color: `hsl(${hue}, 100%, 65%)`,
+        alive: true
+      });
+    }
+
+    let particles = [];
+
+    function createParticles(x, y, hue) {
+      for (let i = 0; i < 40; i++) {
+        const ang = Math.random() * Math.PI * 2;
+        const spd = 4 + Math.random() * 10;
+        particles.push({
+          x, y,
+          vx: Math.cos(ang) * spd,
+          vy: Math.sin(ang) * spd,
+          life: 30,
+          color: `hsl(${hue}, 100%, 70%)`
+        });
+      }
+    }
+
+    // ==========================================
+    // 3. BUCLE PRINCIPAL DE DIBUIXAT
+    // ==========================================
+    function updatePhysics() {
+      // Sub-stepping per evitar travessar anells a alta velocitat
+      const STEPS = 4;
+      for (let s = 0; s < STEPS; s++) {
+        ball.vy += GRAVITY / STEPS;
+        ball.x += ball.vx / STEPS;
+        ball.y += ball.vy / STEPS;
+
+        const dx = ball.x - CENTER.x;
+        const dy = ball.y - CENTER.y;
+        const dist = Math.hypot(dx, dy);
+        let angle = Math.atan2(dy, dx);
+        if (angle < 0) angle += Math.PI * 2;
+
+        rings.forEach((ring, idx) => {
+          if (!ring.alive) return;
+
+          if (Math.abs(dist - ring.radius) <= BALL_RADIUS + 4) {
+            let gStart = (ring.gapAngle - ring.gapSize / 2) % (Math.PI * 2);
+            let gEnd = (ring.gapAngle + ring.gapSize / 2) % (Math.PI * 2);
+            if (gStart < 0) gStart += Math.PI * 2;
+            if (gEnd < 0) gEnd += Math.PI * 2;
+
+            const inGap = (gStart < gEnd)
+              ? (angle >= gStart && angle <= gEnd)
+              : (angle >= gStart || angle <= gEnd);
+
+            if (inGap) {
+              ring.alive = false;
+              playNote(idx, true);
+              createParticles(ball.x, ball.y, ring.hue);
+            } else {
+              // Rebot elàstic normalitzat
+              const nx = dx / dist;
+              const ny = dy / dist;
+              const dot = ball.vx * nx + ball.vy * ny;
+              ball.vx = (ball.vx - 2 * dot * nx) * BOUNCE_FORCE;
+              ball.vy = (ball.vy - 2 * dot * ny) * BOUNCE_FORCE;
+
+              const overlap = (BALL_RADIUS + 4) - Math.abs(dist - ring.radius);
+              ball.x -= nx * (dist > ring.radius ? overlap : -overlap);
+              ball.y -= ny * (dist > ring.radius ? overlap : -overlap);
+
+              playNote(idx, false);
+            }
+          }
+        });
+      }
+
+      // Actualitzar anells
+      rings.forEach(r => {
+        if (r.alive) r.gapAngle = (r.gapAngle + r.speed) % (Math.PI * 2);
+      });
+
+      // Trail
+      ball.trail.push({ x: ball.x, y: ball.y });
+      if (ball.trail.length > 20) ball.trail.shift();
+    }
+
+    function render() {
+      ctx.fillStyle = '#05070e';
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+      // Dibuixar Anells amb resplendor Neó
+      rings.forEach(ring => {
+        if (!ring.alive) return;
+        ctx.save();
+        ctx.shadowBlur = 18;
+        ctx.shadowColor = ring.color;
+        ctx.strokeStyle = ring.color;
+        ctx.lineWidth = 10;
+        ctx.lineCap = 'round';
+
+        ctx.beginPath();
+        const start = ring.gapAngle + ring.gapSize / 2;
+        const end = ring.gapAngle - ring.gapSize / 2 + Math.PI * 2;
+        ctx.arc(CENTER.x, CENTER.y, ring.radius, start, end);
+        ctx.stroke();
+        ctx.restore();
+      });
+
+      // Rastro de la bola
+      ball.trail.forEach((pt, i) => {
+        const alpha = (i + 1) / ball.trail.length;
+        ctx.fillStyle = `rgba(255, 255, 255, ${alpha * 0.4})`;
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, BALL_RADIUS * alpha * 0.7, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      // Partícules
+      particles.forEach((p, i) => {
+        p.x += p.vx;
+        p.y += p.vy;
+        p.life--;
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, Math.max(1, p.life / 5), 0, Math.PI * 2);
+        ctx.fill();
+      });
+      particles = particles.filter(p => p.life > 0);
+
+      // Pilota
+      ctx.save();
+      ctx.shadowBlur = 25;
+      ctx.shadowColor = '#ffffff';
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, BALL_RADIUS, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      // Marca d'aigua pròpia al centre
+      ctx.font = '600 32px sans-serif';
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.22)';
+      ctx.textAlign = 'center';
+      ctx.fillText('bouncelab.tv', CENTER.x, CENTER.y + 12);
+
+      // Text Hook superior
+      ctx.font = '800 58px sans-serif';
+      ctx.fillStyle = '#ffffff';
+      ctx.shadowBlur = 15;
+      ctx.shadowColor = 'rgba(255, 255, 255, 0.5)';
+      ctx.fillText('WILL IT ESCAPE?', CENTER.x, 260);
+
+      updatePhysics();
+      requestAnimationFrame(render);
+    }
+
+    // ==========================================
+    // 4. GRAVADOR INTEGRAT (MediaRecorder)
+    // ==========================================
+    let mediaRecorder;
+    let recordedChunks = [];
+
+    window.startRecording = function() {
+      const canvasStream = canvas.captureStream(60);
+      const audioStream = audioDest.stream;
+      const combined = new MediaStream([
+        ...canvasStream.getVideoTracks(),
+        ...audioStream.getAudioTracks()
+      ]);
+
+      mediaRecorder = new MediaRecorder(combined, {
+        mimeType: 'video/webm;codecs=vp9,opus',
+        videoBitsPerSecond: 8000000 // 8 Mbps d'alta qualitat
+      });
+
+      mediaRecorder.ondataavailable = e => {
+        if (e.data.size > 0) recordedChunks.push(e.data);
+      };
+
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(recordedChunks, { type: 'video/webm' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        a.download = 'simulation.webm';
+        document.body.appendChild(a);
+        a.click();
+      };
+
+      mediaRecorder.start();
+      console.log('GRAVACIÓ INICIADA');
+
+      // Parada automàtica en arribar als segons establerts
+      setTimeout(() => {
+        mediaRecorder.stop();
+        console.log('GRAVACIÓ FINALITZADA');
+      }, RECORD_DURATION * 1000);
+    };
+
+    // Iniciar renderitzat
+    render();
+  </script>
+</body>
+</html>
