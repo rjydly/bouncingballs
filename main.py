@@ -162,7 +162,7 @@ def synthesize_soundtrack(
     total_samples = int((duration_sec + 1.5) * SAMPLE_RATE)
     audio_data = np.zeros(total_samples, dtype=np.float32)
 
-    # Inserció de veu inicial
+    # Inserció de veu en off inicial amb ducking
     tts_start_sample = int(0.15 * SAMPLE_RATE)
     tts_end_sample = 0
     if tts_audio is not None and len(tts_audio) > 0:
@@ -202,7 +202,7 @@ def synthesize_soundtrack(
             ) * np.exp(-3.5 * t)
             audio_data[start_sample : start_sample + n_samples] += chord
         elif ev_type == "pop":
-            # Clic agut i curt per a cada número del 1 al 15 que apareix
+            # Clic rítmic agut per a cada número del 1 al 15 que apareix
             note_len = 0.04
             n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
             t = np.linspace(0, note_len, n_samples, False)
