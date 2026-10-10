@@ -283,3 +283,96 @@ def run():
         is_ready = page.evaluate("typeof window.startRecording === 'function'")
         if not is_ready:
             raise RuntimeError("window.startRecording no està definida al fitxer HTML!")
+
+        raw_video = "raw_simulation.webm"
+
+        with page.expect_download(timeout=120000) as download_info:
+            print("Enregistrant repte visual (~21.6s)...")
+            page.evaluate("window.startRecording()")
+
+        sound_events = page.evaluate("window.soundEvents || []")
+        actual_duration = page.evaluate("window.actualDuration || 21.6")
+        winner_number = page.evaluate("window.winnerName || '?'")
+
+        download = download_info.value
+        download.save_as(raw_video)
+        print(f"Repte completat! Número guanyador: #{winner_number} ({actual_duration:.1f}s).")
+        browser.close()
+
+    audio_file = "simulation_audio.wav"
+    synthesize_soundtrack(
+        sound_events, actual_duration, meme_audio, tts_audio, audio_file
+    )
+
+    final_mp4 = "bouncelab_video.mp4"
+    print("Empaquetant MP4 a 30 FPS...")
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            raw_video,
+            "-i",
+            audio_file,
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-r",
+            "30",
+            "-vsync",
+            "cfr",
+            "-pix_fmt",
+            "yuv420p",
+            "-crf",
+            "26",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-shortest",
+            final_mp4,
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    file_size_mb = os.path.getsize(final_mp4) / (1024 * 1024)
+    print(f"📦 Mida final del vídeo: {file_size_mb:.2f} MB")
+
+    for tmp in [raw_video, audio_file]:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
+    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID and os.path.exists(final_mp4):
+        print("Enviant el vídeo per Telegram...")
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVideo"
+        caption_text = (
+            f"🎯 [DON'T LOSE THE RED BALL]\n"
+            f"🎙️ Hook: \"{tts_phrase}\"\n"
+            f"👀 Has aconseguit no perdre-la?\n"
+            f"🏆 Resposta correcta: Bola #{winner_number}!\n"
+            f"⏱️ Durada: {actual_duration:.1f}s\n"
+            f"📦 Pes: {file_size_mb:.1f} MB\n"
+            f"Canal: @bouncelab.tv 🚀"
+        )
+
+        with open(final_mp4, "rb") as f:
+            res = requests.post(
+                url,
+                data={
+                    "chat_id": TELEGRAM_CHAT_ID,
+                    "caption": caption_text,
+                    "supports_streaming": True,
+                },
+                files={"video": f},
+                timeout=240,
+            )
+            if res.status_code == 200:
+                print("🎉 VÍDEO ENVIAT AMB ÈXIT A TELEGRAM!")
+            else:
+                print(f"Error Telegram: {res.text}")
+
+
+if __name__ == "__main__":
+    run()
