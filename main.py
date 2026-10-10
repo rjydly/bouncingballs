@@ -15,7 +15,7 @@ import requests
 # ==============================================================================
 # ⚙️ PANELL DE CONTROL PRINCIPAL
 # ==============================================================================
-SELECTED_MODE = "tracker"  # Nou mode "Don't lose the red ball"
+SELECTED_MODE = "tracker"
 # ==============================================================================
 
 HOOK_PHRASES = [
@@ -30,18 +30,23 @@ HOOK_PHRASES = [
 ]
 
 PORT = 8080
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-ASSETS_AUDIO_DIR = os.path.join(os.path.dirname(__file__), "assets", "audio")
+ASSETS_AUDIO_DIR = os.path.join(BASE_DIR, "assets", "audio")
+
+
+class CustomHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, directory=BASE_DIR, **kwargs)
 
 
 def start_local_server():
-    handler = http.server.SimpleHTTPRequestHandler
-    httpd = socketserver.TCPServer(("", PORT), handler)
+    httpd = socketserver.TCPServer(("", PORT), CustomHTTPRequestHandler)
     thread = threading.Thread(target=httpd.serve_forever)
     thread.daemon = True
     thread.start()
-    print(f"Servidor web local actiu a http://localhost:{PORT}")
+    print(f"Servidor web local actiu a http://localhost:{PORT} (servint des de {BASE_DIR})")
 
 
 async def _async_generate_voice(text, output_mp3):
@@ -157,21 +162,15 @@ def synthesize_soundtrack(
     total_samples = int((duration_sec + 1.5) * SAMPLE_RATE)
     audio_data = np.zeros(total_samples, dtype=np.float32)
 
-    # Finestra temporal de veu inicial
     tts_start_sample = int(0.15 * SAMPLE_RATE)
-    tts_end_sample = 0
-
     if tts_audio is not None and len(tts_audio) > 0:
         n_tts = min(len(tts_audio), total_samples - tts_start_sample)
-        tts_end_sample = tts_start_sample + n_tts + int(0.25 * SAMPLE_RATE)
         audio_data[tts_start_sample : tts_start_sample + n_tts] += (
             tts_audio[:n_tts] * 2.2
         )
 
-    # Inserció dels tics de compte enrere i el so de revelació
     for ev in sound_events:
         t_sec = ev.get("time", 0)
-        ev_type = ev.get("type", "tick")
         is_reveal = ev.get("isEscape", False)
 
         start_sample = int(t_sec * SAMPLE_RATE)
@@ -184,19 +183,17 @@ def synthesize_soundtrack(
                 meme_audio[:n_samples] * 0.95
             )
         elif is_reveal:
-            # Acord brillant de campana/revelació per defecte
             note_len = 1.2
             n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
             t = np.linspace(0, note_len, n_samples, False)
             chord = (
-                0.5 * np.sin(2 * np.pi * 523.25 * t)  # C5
-                + 0.4 * np.sin(2 * np.pi * 659.25 * t)  # E5
-                + 0.5 * np.sin(2 * np.pi * 783.99 * t)  # G5
-                + 0.4 * np.sin(2 * np.pi * 1046.50 * t) # C6
+                0.5 * np.sin(2 * np.pi * 523.25 * t)
+                + 0.4 * np.sin(2 * np.pi * 659.25 * t)
+                + 0.5 * np.sin(2 * np.pi * 783.99 * t)
+                + 0.4 * np.sin(2 * np.pi * 1046.50 * t)
             ) * np.exp(-3.5 * t)
             audio_data[start_sample : start_sample + n_samples] += chord
         else:
-            # Tic de metrònom/fusta sec a cada segon
             note_len = 0.05
             n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
             t = np.linspace(0, note_len, n_samples, False)
@@ -218,7 +215,29 @@ def synthesize_soundtrack(
         wf.setframerate(SAMPLE_RATE)
         wf.writeframes(audio_int16.tobytes())
 
-    print(f"🎵 Àudio generat amb èxit ({duration_sec:.1f}s).")
+    print(f"🎵 Àudio sintetitzat correctament ({duration_sec:.1f}s).")
+
+
+def resolve_simulation_url():
+    possible_candidates = [
+        f"{SELECTED_MODE}.html",
+        os.path.join("simulators", f"{SELECTED_MODE}.html"),
+        "battle.html",
+        os.path.join("simulators", "battle.html"),
+    ]
+
+    for rel_path in possible_candidates:
+        full_path = os.path.join(BASE_DIR, rel_path)
+        if os.path.exists(full_path):
+            web_path = rel_path.replace("\\", "/")
+            print(f"📄 Fitxer HTML trobat: {web_path}")
+            return f"http://localhost:{PORT}/{web_path}"
+
+    all_files = os.listdir(BASE_DIR)
+    raise FileNotFoundError(
+        f"❌ No s'ha trobat {SELECTED_MODE}.html ni cap fitxer alternatiu a {BASE_DIR}. "
+        f"Fitxers existents: {all_files}"
+    )
 
 
 def run():
@@ -226,8 +245,7 @@ def run():
     meme_audio, meme_name = load_random_meme_sound()
     tts_audio, tts_phrase = generate_tts_intro()
 
-    active_mode = SELECTED_MODE
-    sim_url = f"http://localhost:{PORT}/{active_mode}.html"
+    sim_url = resolve_simulation_url()
 
     with sync_playwright() as p:
         print("Iniciant Firefox en mode headless...")
@@ -241,13 +259,20 @@ def run():
         page = context.new_page()
 
         print(f"Carregant simulador ({sim_url})...")
-        page.goto(sim_url, wait_until="load")
+        response = page.goto(sim_url, wait_until="load")
+        if response and response.status >= 400:
+            raise RuntimeError(f"Error HTTP {response.status} en carregar {sim_url}!")
+
         page.wait_for_timeout(1000)
+
+        is_ready = page.evaluate("typeof window.startRecording === 'function'")
+        if not is_ready:
+            raise RuntimeError("window.startRecording no està definida al fitxer HTML!")
 
         raw_video = "raw_simulation.webm"
 
         with page.expect_download(timeout=120000) as download_info:
-            print("Enregistrant repte visual (~21s)...")
+            print("Enregistrant repte visual (~21.5s)...")
             page.evaluate("window.startRecording()")
 
         sound_events = page.evaluate("window.soundEvents || []")
