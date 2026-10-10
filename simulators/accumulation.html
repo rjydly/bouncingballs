@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>BounceLab - Accumulation Mode</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Lexend:wght@700;800;900&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background-color: #030712;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      overflow: hidden;
+      font-family: 'Lexend', sans-serif;
+    }
+    canvas {
+      width: auto;
+      height: 100vh;
+      aspect-ratio: 9 / 16;
+      box-shadow: 0 0 50px rgba(0, 0, 0, 0.95);
+    }
+    .font-preload {
+      position: absolute;
+      left: -9999px;
+      visibility: hidden;
+      pointer-events: none;
+    }
+    .w700 { font-family: 'Lexend', sans-serif; font-weight: 700; }
+    .w800 { font-family: 'Lexend', sans-serif; font-weight: 800; }
+    .w900 { font-family: 'Lexend', sans-serif; font-weight: 900; }
+  </style>
+</head>
+<body>
+  <div class="font-preload w700">Preload Lexend 700</div>
+  <div class="font-preload w800">Preload Lexend 800</div>
+  <div class="font-preload w900">Preload Lexend 900</div>
+
+  <canvas id="canvas" width="1080" height="1920"></canvas>
+
+  <script>
+    // ============================================================
+    // 0. CONFIGURACIÓ GLOBAL
+    // ============================================================
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const WIDTH = 1080, HEIGHT = 1920;
+    const CENTER = { x: WIDTH / 2, y: HEIGHT / 2 };
+
+    const ARENA_RADIUS = 410;
+    const BALL_RADIUS = 21;
+    const BALL_SPEED = 640;
+    const TIME_PER_BALL = 4.2; // Segons que té cada bola abans de congelar-se
+
+    window.soundEvents = [];
+    window.actualDuration = 0;
+    window.winnerName = "";
+    window.frozenCount = 0;
+
+    let startTime = null;
+    let isRunning = false;
+    let isFinished = false;
+
+    function recordSound(type, note = 0) {
+      if (startTime !== null) {
+        const timeSec = (performance.now() - startTime) / 1000;
+        window.soundEvents.push({
+          time: timeSec,
+          type: type, // 'bounce', 'freeze', 'reveal'
+          note: note,
+          isEscape: type === 'reveal'
+        });
+      }
+    }
+
+    // ============================================================
+    // 1. GENERADOR DETERMINISTA (PRNG PER REPRODUIR LA MILLOR PARTIDA)
+    // ============================================================
+    function createPRNG(seed) {
+      let s = seed % 2147483647;
+      if (s <= 0) s += 2147483646;
+      return function() {
+        s = (s * 16807) % 2147483647;
+        return (s - 1) / 2147483646;
+      };
+    }
+
+    // ============================================================
+    // 2. PRE-SIMULACIÓ (TROBA PARTIDA GARANTIDA ENTRE 20s I 36s)
+    // ============================================================
+    function simulateCandidate(seed) {
+      const rnd = createPRNG(seed);
+      let gapAngle = rnd() * Math.PI * 2;
+      const rotSpeed = 0.55;
+      const gapSize = 0.62; // ~35 graus
+
+      let simTime = 0;
+      let ballIdx = 1;
+      let frozen = [];
+
+      let ballAng = rnd() * Math.PI * 2;
+      let b = {
+        x: CENTER.x,
+        y: CENTER.y,
+        vx: Math.cos(ballAng) * BALL_SPEED,
+        vy: Math.sin(ballAng) * BALL_SPEED,
+        timer: TIME_PER_BALL
+      };
+
+      const DT = 1 / 60;
+      const MAX_SIM_TIME = 45;
+
+      while (simTime < MAX_SIM_TIME) {
+        simTime += DT;
+        gapAngle = (gapAngle + rotSpeed * DT) % (Math.PI * 2);
+        b.timer -= DT;
+
+        // Moviment
+        b.x += b.vx * DT;
+        b.y += b.vy * DT;
+
+        // Comprovar paret
+        const dx = b.x - CENTER.x;
+        const dy = b.y - CENTER.y;
+        const dist = Math.hypot(dx, dy);
+
+        if (dist >= ARENA_RADIUS - BALL_RADIUS) {
+          let hitAng = Math.atan2(dy, dx);
+          if (hitAng < 0) hitAng += Math.PI * 2;
+
+          let diff = Math.abs(hitAng - gapAngle) % (Math.PI * 2);
+          if (diff > Math.PI) diff = Math.PI * 2 - diff;
+
+          if (diff <= gapSize / 2) {
+            // Ha escapat!
+            if (simTime >= 20.0 && simTime <= 36.0 && frozen.length >= 4) {
+              return { success: true, duration: simTime, frozenCount: frozen.length, seed };
+            }
+            return { success: false };
+          } else {
+            // Rebot de paret
+            const nx = dx / (dist || 1);
+            const ny = dy / (dist || 1);
+            const dot = b.vx * nx + b.vy * ny;
+            if (dot > 0) {
+              b.vx -= 2 * dot * nx;
+              b.vy -= 2 * dot * ny;
+            }
+          }
+        }
+
+        // Rebot contra boles congelades
+        for (let i = 0; i < frozen.length; i++) {
+          const f = frozen[i];
+          const fdx = b.x - f.x;
+          const fdy = b.y - f.y;
+          const fdist = Math.hypot(fdx, fdy);
+          const minDist = BALL_RADIUS * 2;
+          if (fdist < minDist && fdist > 0.001) {
+            const fnx = fdx / fdist;
+            const fny = fdy / fdist;
+            const fdot = b.vx * fnx + b.vy * fny;
+            if (fdot < 0) {
+              b.vx -= 2 * fdot * fnx;
+              b.vy -= 2 * fdot * fny;
+            }
+          }
+        }
+
+        // Temps esgotat: congelar bola
+        if (b.timer <= 0) {
+          frozen.push({ x: b.x, y: b.y });
+          ballIdx++;
+          const newAng = rnd() * Math.PI * 2;
+          b = {
+            x: CENTER.x,
+            y: CENTER.y,
+            vx: Math.cos(newAng) * BALL_SPEED,
+            vy: Math.sin(newAng) * BALL_SPEED,
+            timer: TIME_PER_BALL
+          };
+        }
+      }
+      return { success: false };
+    }
+
+    function findBestSeed() {
+      for (let s = 1; s < 500; s++) {
+        const res = simulateCandidate(s);
+        if (res.success) {
+          console.log(`✅ Partida d'acumulació òptima trobada! Seed: ${s}, durada: ${res.duration.toFixed(1)}s, boles congelades: ${res.frozenCount}`);
+          return s;
+        }
+      }
+      return 42; // Seed de reserva
+    }
+
+    const optimalSeed = findBestSeed();
+    const gameRND = createPRNG(optimalSeed);
+
+    // ============================================================
+    // 3. ESTAT DEL JOC EN TEMPS REAL
+    // ============================================================
+    let ring = {
+      radius: ARENA_RADIUS,
+      gapAngle: gameRND() * Math.PI * 2,
+      gapSize: 0.62,
+      rotSpeed: 0.55
+    };
+
+    let frozenBalls = [];
+    let currentBallNumber = 1;
+
+    let activeBallAng = gameRND() * Math.PI * 2;
+    let activeBall = {
+      x: CENTER.x,
+      y: CENTER.y,
+      vx: Math.cos(activeBallAng) * BALL_SPEED,
+      vy: Math.sin(activeBallAng) * BALL_SPEED,
+      timer: TIME_PER_BALL,
+      trail: []
+    };
+
+    let particles = [];
+    let iceSparks = [];
+    let hasEscaped = false;
+
+    function spawnFreezeBurst(x, y) {
+      for (let i = 0; i < 35; i++) {
+        const ang = Math.random() * Math.PI * 2;
+        const spd = 4 + Math.random() * 12;
+        iceSparks.push({
+          x, y,
+          vx: Math.cos(ang) * spd,
+          vy: Math.sin(ang) * spd,
+          life: 28,
+          color: i % 2 === 0 ? '#93c5fd' : '#e0f2fe'
+        });
+      }
+    }
+
+    function spawnVictoryConfetti() {
+      for (let i = 0; i < 90; i++) {
+        const ang = Math.random() * Math.PI * 2;
+        const spd = 7 + Math.random() * 22;
+        particles.push({
+          x: CENTER.x, y: CENTER.y,
+          vx: Math.cos(ang) * spd,
+          vy: Math.sin(ang) * spd,
+          life: 65,
+          color: ['#00f2fe', '#38bdf8', '#ffffff', '#fbbf24', '#f43f5e'][i % 5]
+        });
+      }
+    }
+
+    // ============================================================
+    // 4. FÍSICA EN TEMPS REAL
+    // ============================================================
+    function updatePhysics(dt) {
+      if (!isRunning || hasEscaped) return;
+
+      const SUB_STEPS = 6;
+      const stepDt = dt / SUB_STEPS;
+
+      ring.gapAngle = (ring.gapAngle + ring.rotSpeed * dt) % (Math.PI * 2);
+      activeBall.timer -= dt;
+
+      for (let s = 0; s < SUB_STEPS; s++) {
+        activeBall.x += activeBall.vx * stepDt;
+        activeBall.y += activeBall.vy * stepDt;
+
+        const dx = activeBall.x - CENTER.x;
+        const dy = activeBall.y - CENTER.y;
+        const dist = Math.hypot(dx, dy);
+
+        // Col·lisió amb el mur exterior
+        if (dist >= ARENA_RADIUS - BALL_RADIUS) {
+          let hitAng = Math.atan2(dy, dx);
+          if (hitAng < 0) hitAng += Math.PI * 2;
+
+          let diff = Math.abs(hitAng - ring.gapAngle) % (Math.PI * 2);
+          if (diff > Math.PI) diff = Math.PI * 2 - diff;
+
+          if (diff <= ring.gapSize / 2) {
+            // HA ESCAPAT PER LA PORTA!
+            if (dist > ARENA_RADIUS + BALL_RADIUS + 10) {
+              hasEscaped = true;
+              isFinished = true;
+              window.winnerName = currentBallNumber.toString();
+              window.frozenCount = frozenBalls.length;
+              window.actualDuration = (performance.now() - startTime) / 1000;
+
+              recordSound('reveal', 10);
+              spawnVictoryConfetti();
+
+              setTimeout(() => {
+                if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                  mediaRecorder.stop();
+                }
+              }, 2500);
+              return;
+            }
+          } else {
+            // Rebot de paret
+            const nx = dx / (dist || 1);
+            const ny = dy / (dist || 1);
+            const dot = activeBall.vx * nx + activeBall.vy * ny;
+            if (dot > 0) {
+              const rx = activeBall.vx - 2 * dot * nx;
+              const ry = activeBall.vy - 2 * dot * ny;
+              const spd = Math.hypot(rx, ry) || 1;
+              activeBall.vx = (rx / spd) * BALL_SPEED;
+              activeBall.vy = (ry / spd) * BALL_SPEED;
+              activeBall.x = CENTER.x + nx * (ARENA_RADIUS - BALL_RADIUS);
+              activeBall.y = CENTER.y + ny * (ARENA_RADIUS - BALL_RADIUS);
+              recordSound('bounce', 1);
+            }
+          }
+        }
+
+        // Col·lisió contra les boles congelades
+        for (let i = 0; i < frozenBalls.length; i++) {
+          const f = frozenBalls[i];
+          const fdx = activeBall.x - f.x;
+          const fdy = activeBall.y - f.y;
+          const fdist = Math.hypot(fdx, fdy);
+          const minDist = BALL_RADIUS * 2;
+
+          if (fdist < minDist && fdist > 0.001) {
+            const fnx = fdx / fdist;
+            const fny = fdy / fdist;
+            const fdot = activeBall.vx * fnx + activeBall.vy * fny;
+
+            if (fdot < 0) {
+              const rx = activeBall.vx - 2 * fdot * fnx;
+              const ry = activeBall.vy - 2 * fdot * fny;
+              const spd = Math.hypot(rx, ry) || 1;
+              activeBall.vx = (rx / spd) * BALL_SPEED;
+              activeBall.vy = (ry / spd) * BALL_SPEED;
+
+              activeBall.x = f.x + fnx * minDist;
+              activeBall.y = f.y + fny * minDist;
+              recordSound('bounce', 2);
+            }
+          }
+        }
+      }
+
+      // Estela de moviment
+      activeBall.trail.push({ x: activeBall.x, y: activeBall.y });
+      if (activeBall.trail.length > 14) activeBall.trail.shift();
+
+      // Temps esgotat: congelar bola i crear-ne una de nova
+      if (activeBall.timer <= 0) {
+        frozenBalls.push({ x: activeBall.x, y: activeBall.y, id: currentBallNumber });
+        spawnFreezeBurst(activeBall.x, activeBall.y);
+        recordSound('freeze', 5);
+
+        currentBallNumber++;
+        const nextAng = gameRND() * Math.PI * 2;
+        activeBall = {
+          x: CENTER.x,
+          y: CENTER.y,
+          vx: Math.cos(nextAng) * BALL_SPEED,
+          vy: Math.sin(nextAng) * BALL_SPEED,
+          timer: TIME_PER_BALL,
+          trail: []
+        };
+      }
+    }
+
+    // ============================================================
+    // 5. RENDERITZAT VISUAL
+    // ============================================================
+    let lastTime = null;
+
+    function render(currentTime) {
+      if (!startTime) startTime = currentTime;
+      if (!lastTime) lastTime = currentTime;
+      const elapsed = (currentTime - startTime) / 1000;
+      const dt = Math.min((currentTime - lastTime) / 1000, 0.05);
+      lastTime = currentTime;
+
+      ctx.fillStyle = '#030712';
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+      // Títol superior
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.font = '800 52px Lexend, sans-serif';
+
+      const titlePrefix = "Can the ball ";
+      const titleHighlight = "escape?";
+      const totalWidth = ctx.measureText(titlePrefix).width + ctx.measureText(titleHighlight).width;
+      const startX = CENTER.x - totalWidth / 2;
+
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'left';
+      ctx.fillText(titlePrefix, startX, 310);
+      ctx.fillStyle = '#00f2fe';
+      ctx.fillText(titleHighlight, startX + ctx.measureText(titlePrefix).width, 310);
+
+      ctx.textAlign = 'center';
+      ctx.font = '700 28px Lexend, sans-serif';
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+      ctx.fillText(`FREEZES EVERY ${TIME_PER_BALL.toFixed(1)}s`, CENTER.x, 365);
+      ctx.restore();
+
+      // Anell exterior amb obertura giratòria
+      ctx.save();
+      ctx.shadowBlur = 18;
+      ctx.shadowColor = '#00f2fe';
+      ctx.strokeStyle = '#00f2fe';
+      ctx.lineWidth = 6;
+      ctx.lineCap = 'round';
+
+      ctx.beginPath();
+      const startGap = ring.gapAngle + ring.gapSize / 2;
+      const endGap = ring.gapAngle - ring.gapSize / 2 + Math.PI * 2;
+      ctx.arc(CENTER.x, CENTER.y, ARENA_RADIUS, startGap, endGap);
+      ctx.stroke();
+      ctx.restore();
+
+      // Guspires de gel
+      iceSparks.forEach(s => {
+        s.x += s.vx;
+        s.y += s.vy;
+        s.life--;
+        ctx.fillStyle = s.color;
+        ctx.fillRect(s.x, s.y, 4, 4);
+      });
+      iceSparks = iceSparks.filter(s => s.life > 0);
+
+      // Partícules de victòria
+      particles.forEach(p => {
+        p.x += p.vx;
+        p.y += p.vy;
+        p.life--;
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, Math.max(1, p.life / 6), 0, Math.PI * 2);
+        ctx.fill();
+      });
+      particles = particles.filter(p => p.life > 0);
+
+      // Dibuixar boles congelades (estil cristall de gel)
+      frozenBalls.forEach(fb => {
+        ctx.save();
+        ctx.shadowBlur = 12;
+        ctx.shadowColor = '#93c5fd';
+        ctx.fillStyle = '#cbd5e1';
+        ctx.beginPath();
+        ctx.arc(fb.x, fb.y, BALL_RADIUS, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = '#38bdf8';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+        ctx.restore();
+      });
+
+      // Estela de la bola activa
+      activeBall.trail.forEach((pt, i) => {
+        const alpha = (i + 1) / activeBall.trail.length;
+        ctx.save();
+        ctx.fillStyle = `rgba(0, 242, 254, ${alpha * 0.4})`;
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, BALL_RADIUS * alpha * 0.85, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      });
+
+      // Dibuixar bola activa
+      ctx.save();
+      ctx.shadowBlur = 24;
+      ctx.shadowColor = '#00f2fe';
+      ctx.fillStyle = '#00f2fe';
+      ctx.beginPath();
+      ctx.arc(activeBall.x, activeBall.y, BALL_RADIUS, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      // Comptador de temps restant de la bola actual (arc circular al voltant del centre)
+      if (!hasEscaped) {
+        const timeLeft = Math.max(0, activeBall.timer);
+        ctx.save();
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.font = '900 68px Lexend, sans-serif';
+        ctx.fillStyle = timeLeft < 1.0 ? '#ef4444' : 'rgba(255, 255, 255, 0.18)';
+        ctx.fillText(timeLeft.toFixed(1) + 's', CENTER.x, CENTER.y);
+        ctx.restore();
+      } else {
+        // Text de victòria
+        ctx.save();
+        ctx.textAlign = 'center';
+        ctx.font = '900 74px Lexend, sans-serif';
+        ctx.fillStyle = '#00f2fe';
+        ctx.shadowBlur = 25;
+        ctx.shadowColor = '#00f2fe';
+        ctx.fillText('ESCAPED! 🏆', CENTER.x, CENTER.y - 30);
+
+        ctx.font = '800 36px Lexend, sans-serif';
+        ctx.fillStyle = '#ffffff';
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = '#ffffff';
+        ctx.fillText(`AFTER ${frozenBalls.length} FROZEN BALLS!`, CENTER.x, CENTER.y + 40);
+        ctx.restore();
+      }
+
+      // Marcador inferior de boles congelades
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.font = '800 36px Lexend, sans-serif';
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(`FROZEN BALLS: ${frozenBalls.length}`, CENTER.x, HEIGHT - 330);
+
+      ctx.font = '700 28px Lexend, sans-serif';
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
+      ctx.fillText('@bouncelab.tv', CENTER.x, HEIGHT - 240);
+      ctx.restore();
+
+      updatePhysics(dt);
+      requestAnimationFrame(render);
+    }
+
+    // ============================================================
+    // 6. MEDIARECORDER
+    // ============================================================
+    let mediaRecorder;
+    let recordedChunks = [];
+
+    window.startRecording = function() {
+      startTime = performance.now();
+      isRunning = true;
+      window.soundEvents = [];
+      recordedChunks = [];
+
+      const stream = canvas.captureStream(30);
+
+      let mimeType = 'video/webm;codecs=vp8';
+      if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
+        mimeType = 'video/webm;codecs=vp9';
+      } else if (MediaRecorder.isTypeSupported('video/webm')) {
+        mimeType = 'video/webm';
+      }
+
+      mediaRecorder = new MediaRecorder(stream, {
+        mimeType: mimeType,
+        videoBitsPerSecond: 4500000
+      });
+
+      mediaRecorder.ondataavailable = e => {
+        if (e.data.size > 0) recordedChunks.push(e.data);
+      };
+
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(recordedChunks, { type: 'video/webm' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        a.download = 'simulation.webm';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      };
+
+      mediaRecorder.start();
+
+      setTimeout(() => {
+        if (mediaRecorder.state !== 'inactive') {
+          window.actualDuration = (performance.now() - startTime) / 1000;
+          mediaRecorder.stop();
+        }
+      }, 42000);
+    };
+
+    document.fonts.ready.then(() => {
+      requestAnimationFrame(render);
+    });
+  </script>
+</body>
+</html>
