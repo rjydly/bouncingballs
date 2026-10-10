@@ -15,18 +15,18 @@ import requests
 # ==============================================================================
 # ⚙️ PANELL DE CONTROL PRINCIPAL
 # ==============================================================================
-SELECTED_MODE = "tracker"
+SELECTED_MODE = "accumulation"
 # ==============================================================================
 
 HOOK_PHRASES = [
-    "Don't lose the red ball!",
-    "Can you track the red ball?",
-    "Keep your eyes on the red ball!",
-    "Follow the red ball and guess the number!",
-    "Don't blink or you'll lose the red ball!",
-    "Test your focus! Track the red ball!",
-    "Which number will the red ball be?",
-    "Follow the red ball to the end!",
+    "Will any ball manage to escape?",
+    "Can the ball escape before freezing?",
+    "How many balls will freeze before one escapes?",
+    "Guess how many balls will freeze!",
+    "Can the final ball make it out?",
+    "Watch the arena fill up with frozen balls!",
+    "Bet how many balls it takes to escape!",
+    "Which ball will break through?",
 ]
 
 PORT = 8080
@@ -162,7 +162,7 @@ def synthesize_soundtrack(
     total_samples = int((duration_sec + 1.5) * SAMPLE_RATE)
     audio_data = np.zeros(total_samples, dtype=np.float32)
 
-    # Veu inicial
+    # Inserció de la veu inicial amb ducking
     tts_start_sample = int(0.15 * SAMPLE_RATE)
     tts_end_sample = 0
     if tts_audio is not None and len(tts_audio) > 0:
@@ -172,9 +172,12 @@ def synthesize_soundtrack(
             tts_audio[:n_tts] * 2.2
         )
 
+    FREQUENCIES = [329.63, 392.00, 440.00, 493.88, 587.33, 659.25]
+
     for ev in sound_events:
         t_sec = ev.get("time", 0)
-        ev_type = ev.get("type", "tick")
+        ev_type = ev.get("type", "bounce")
+        note_idx = ev.get("note", 0)
         is_reveal = ev.get("isEscape", False)
 
         start_sample = int(t_sec * SAMPLE_RATE)
@@ -190,7 +193,8 @@ def synthesize_soundtrack(
                 meme_audio[:n_samples] * 0.95
             )
         elif is_reveal:
-            note_len = 1.2
+            # Acord brillant d'escapada
+            note_len = 1.3
             n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
             t = np.linspace(0, note_len, n_samples, False)
             chord = (
@@ -200,21 +204,25 @@ def synthesize_soundtrack(
                 + 0.4 * np.sin(2 * np.pi * 1046.50 * t)
             ) * np.exp(-3.5 * t)
             audio_data[start_sample : start_sample + n_samples] += chord
-        elif ev_type == "pop":
-            note_len = 0.04
+        elif ev_type == "freeze":
+            # So de congelació / cruixit de gel
+            note_len = 0.22
             n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
             t = np.linspace(0, note_len, n_samples, False)
-            pop = np.sin(2 * np.pi * 1800 * t) * np.exp(-90 * t)
-            audio_data[start_sample : start_sample + n_samples] += pop * 0.40
+            ice = (
+                np.sin(2 * np.pi * 880 * t) * 0.4
+                + np.sin(2 * np.pi * 1760 * t) * 0.3
+                + (np.random.rand(n_samples) - 0.5) * 0.25
+            ) * np.exp(-12 * t)
+            audio_data[start_sample : start_sample + n_samples] += ice * 0.50
         else:
-            note_len = 0.05
+            # Rebot harmònic pentatònic suau
+            freq = FREQUENCIES[note_idx % len(FREQUENCIES)]
+            note_len = 0.08
             n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
             t = np.linspace(0, note_len, n_samples, False)
-            click = (
-                np.sin(2 * np.pi * 1100 * t) * 0.5
-                + np.sin(2 * np.pi * 550 * t) * 0.3
-            ) * np.exp(-65 * t)
-            audio_data[start_sample : start_sample + n_samples] += click * 0.35 * duck
+            pop = np.sin(2 * np.pi * freq * t) * np.exp(-35 * t)
+            audio_data[start_sample : start_sample + n_samples] += pop * 0.25 * duck
 
     max_amp = np.max(np.abs(audio_data))
     if max_amp > 0:
@@ -235,8 +243,8 @@ def resolve_simulation_url():
     possible_candidates = [
         f"{SELECTED_MODE}.html",
         os.path.join("simulators", f"{SELECTED_MODE}.html"),
-        "battle.html",
-        os.path.join("simulators", "battle.html"),
+        "tracker.html",
+        os.path.join("simulators", "tracker.html"),
     ]
 
     for rel_path in possible_candidates:
@@ -284,16 +292,17 @@ def run():
         raw_video = "raw_simulation.webm"
 
         with page.expect_download(timeout=120000) as download_info:
-            print("Enregistrant repte visual (~21.6s)...")
+            print("Enregistrant mode Accumulation...")
             page.evaluate("window.startRecording()")
 
         sound_events = page.evaluate("window.soundEvents || []")
-        actual_duration = page.evaluate("window.actualDuration || 21.6")
-        winner_number = page.evaluate("window.winnerName || '?'")
+        actual_duration = page.evaluate("window.actualDuration || 25.0")
+        winner_ball = page.evaluate("window.winnerName || '?'")
+        frozen_count = page.evaluate("window.frozenCount || 0")
 
         download = download_info.value
         download.save_as(raw_video)
-        print(f"Repte completat! Número guanyador: #{winner_number} ({actual_duration:.1f}s).")
+        print(f"Repte completat! La bola #{winner_ball} ha escapat després de {frozen_count} congelacions ({actual_duration:.1f}s).")
         browser.close()
 
     audio_file = "simulation_audio.wav"
@@ -345,10 +354,10 @@ def run():
         print("Enviant el vídeo per Telegram...")
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVideo"
         caption_text = (
-            f"🎯 [DON'T LOSE THE RED BALL]\n"
+            f"🧊 [ACCUMULATION MODE]\n"
             f"🎙️ Hook: \"{tts_phrase}\"\n"
-            f"👀 Has aconseguit no perdre-la?\n"
-            f"🏆 Resposta correcta: Bola #{winner_number}!\n"
+            f"❄️ Boles congelades: {frozen_count}\n"
+            f"🏆 La bola #{winner_ball} ha aconseguit escapar!\n"
             f"⏱️ Durada: {actual_duration:.1f}s\n"
             f"📦 Pes: {file_size_mb:.1f} MB\n"
             f"Canal: @bouncelab.tv 🚀"
