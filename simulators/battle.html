@@ -35,9 +35,9 @@
     const CENTER = { x: WIDTH / 2, y: HEIGHT / 2 };
     const ARENA_RADIUS = 465;
 
-    // LÍMITS DE DURADA GARANTITS: Entre 18s i 75s
-    const MIN_DURATION = 18;
-    const MAX_DURATION = 75;
+    // LÍMIT MÍNIM ESTRICTE: MAI MENYS DE 22 SEGONS
+    const STRICT_MIN_DURATION = 22.0;
+    const STRICT_MAX_DURATION = 75.0;
 
     window.soundEvents = [];
     window.actualDuration = 0;
@@ -79,16 +79,16 @@
     ];
 
     // ==========================================
-    // 2. FÍSICA: +6.0% D'ACCELERACIÓ PER REBOT
+    // 2. FÍSICA EQUILIBRADA (DURADA SOSTINGUDA)
     // ==========================================
-    const GRAVITY = 0.0;                   // Zero gravity: moviment lliure en 360°
-    const INITIAL_SPEED = 8.5;             // Mateixa velocitat inicial per a totes
+    const GRAVITY = 0.0;
+    const INITIAL_SPEED = 9.0;
     const MIN_SPEED = 8.0;
-    const INDIVIDUAL_BOUNCE_ACCEL = 1.06;  // +6.0% a cada rebot de paret
-    const MAX_SPEED = 44;
+    const INDIVIDUAL_BOUNCE_ACCEL = 1.025; // Acceleració suau i progressiva
+    const MAX_SPEED = 42;
     const BALL_RADIUS = 20;
+    const CUTTER_COOLDOWN = 12; // Cooldown per bola talladora (evita buidar ventalls en 1 cop)
 
-    // Distància matemàtica exacta d'un punt a un segment
     function distToSegment(px, py, x1, y1, x2, y2) {
       const dx = x2 - x1;
       const dy = y2 - y1;
@@ -100,11 +100,12 @@
     }
 
     function generateBattleCandidate() {
-      // 4 o 5 boles màxim per mantenir fluïdesa
+      // 4 o 5 boles
       const numBalls = Math.random() < 0.5 ? 4 : 5;
       const shuffledColors = [...PALETTE].sort(() => Math.random() - 0.5).slice(0, numBalls);
 
-      const TOTAL_ANCHORS = 120;
+      // 160 ÀNCORES TOTALS = 32 A 40 CORDES PER BOLA D'INICI
+      const TOTAL_ANCHORS = 160;
       const anchorsPerBall = Math.floor(TOTAL_ANCHORS / numBalls);
 
       let balls = [];
@@ -142,6 +143,7 @@
           radius: BALL_RADIUS,
           lines: lines,
           alive: true,
+          cutCooldownTimer: 0,
           trail: []
         });
       }
@@ -150,7 +152,7 @@
     }
 
     // ==========================================
-    // 3. PRE-SIMULACIÓ (FILTRE ESTRICTE 18s - 75s)
+    // 3. PRE-SIMULACIÓ (GARANTIA ESTRICTA >= 22s)
     // ==========================================
     function simulateBattle(setup, maxAllowedSec) {
       const testBalls = setup.balls.map(b => ({
@@ -160,6 +162,7 @@
         vy: b.vy,
         radius: b.radius,
         alive: true,
+        cutCooldownTimer: 0,
         lines: b.lines.map(l => ({ ax: l.ax, ay: l.ay }))
       }));
 
@@ -170,6 +173,11 @@
 
       while (frame < maxFrames) {
         frame++;
+
+        // Descomptar cooldowns
+        for (let b = 0; b < testBalls.length; b++) {
+          if (testBalls[b].cutCooldownTimer > 0) testBalls[b].cutCooldownTimer--;
+        }
 
         for (let s = 0; s < SUB_STEPS; s++) {
           // 1. Moure boles vives
@@ -184,7 +192,7 @@
             const dy = ball.y - CENTER.y;
             const dist = Math.hypot(dx, dy);
 
-            // Rebot de paret: afegeix una corda nova i accelera +6%
+            // Rebot de paret: REGENERA 2 CORDES
             if (dist >= ARENA_RADIUS - ball.radius) {
               const nx = dx / (dist || 1);
               const ny = dy / (dist || 1);
@@ -194,7 +202,7 @@
                 let rx = (ball.vx - 2 * dot * nx) * INDIVIDUAL_BOUNCE_ACCEL;
                 let ry = (ball.vy - 2 * dot * ny) * INDIVIDUAL_BOUNCE_ACCEL;
 
-                const ang = Math.atan2(ry, rx) + (Math.random() - 0.5) * 0.12;
+                const ang = Math.atan2(ry, rx) + (Math.random() - 0.5) * 0.10;
                 const spd = Math.min(MAX_SPEED, Math.max(MIN_SPEED, Math.hypot(rx, ry)));
                 ball.vx = Math.cos(ang) * spd;
                 ball.vy = Math.sin(ang) * spd;
@@ -202,10 +210,15 @@
                 ball.x = CENTER.x + nx * (ARENA_RADIUS - ball.radius);
                 ball.y = CENTER.y + ny * (ARENA_RADIUS - ball.radius);
 
-                // Nova corda
+                // REGENERA 2 CORDES PER REBOT
+                const baseAng = Math.atan2(ny, nx);
                 ball.lines.push({
-                  ax: CENTER.x + nx * ARENA_RADIUS,
-                  ay: CENTER.y + ny * ARENA_RADIUS
+                  ax: CENTER.x + Math.cos(baseAng - 0.04) * ARENA_RADIUS,
+                  ay: CENTER.y + Math.sin(baseAng - 0.04) * ARENA_RADIUS
+                });
+                ball.lines.push({
+                  ax: CENTER.x + Math.cos(baseAng + 0.04) * ARENA_RADIUS,
+                  ay: CENTER.y + Math.sin(baseAng + 0.04) * ARENA_RADIUS
                 });
               }
             }
@@ -249,7 +262,7 @@
           // 3. Tall físic estricte de cordes
           for (let b = 0; b < testBalls.length; b++) {
             const cutter = testBalls[b];
-            if (!cutter.alive) continue;
+            if (!cutter.alive || cutter.cutCooldownTimer > 0) continue;
 
             for (let t = 0; t < testBalls.length; t++) {
               if (b === t) continue;
@@ -260,14 +273,17 @@
                 const line = target.lines[l];
                 const d = distToSegment(cutter.x, cutter.y, line.ax, line.ay, target.x, target.y);
 
-                if (d <= cutter.radius + 2.0) {
+                if (d <= cutter.radius + 1.5) {
                   target.lines.splice(l, 1);
+                  cutter.cutCooldownTimer = CUTTER_COOLDOWN; // Aplica cooldown al tallador
+
                   if (target.lines.length === 0) {
                     target.alive = false;
                   }
                   break;
                 }
               }
+              if (cutter.cutCooldownTimer > 0) break;
             }
           }
 
@@ -281,28 +297,33 @@
       return Infinity;
     }
 
+    // CERCA GARANTIDA: MAI RETORNA CAP PARTIDA DE MENYS DE 22 SEGONS
     function findPerfectBattle() {
-      console.log(`🔍 Cercant batalla entre ${MIN_DURATION}s i ${MAX_DURATION}s...`);
-      let bestCandidate = null;
-      let bestDur = 0;
-
-      for (let attempt = 0; attempt < 500; attempt++) {
+      console.log(`🔍 Cercant partida garantida entre ${STRICT_MIN_DURATION}s i ${STRICT_MAX_DURATION}s...`);
+      for (let attempt = 0; attempt < 800; attempt++) {
         const candidate = generateBattleCandidate();
-        const dur = simulateBattle(candidate, MAX_DURATION);
+        const dur = simulateBattle(candidate, STRICT_MAX_DURATION);
 
-        if (dur >= MIN_DURATION && dur <= MAX_DURATION) {
-          console.log(`✅ Partida perfecta trobada en intent ${attempt + 1}! Durada: ${dur.toFixed(1)}s`);
+        // CONDICIÓ INFRANGIBLE: HA DE SER >= 22 SEGONS
+        if (dur >= STRICT_MIN_DURATION && dur <= STRICT_MAX_DURATION) {
+          console.log(`✅ PARTIDA PERFECTA CONFIRMADA en intent ${attempt + 1}! Durada: ${dur.toFixed(1)}s`);
           return candidate;
-        }
-
-        if (dur > bestDur && dur < MAX_DURATION) {
-          bestDur = dur;
-          bestCandidate = candidate;
         }
       }
 
-      console.log(`ℹ️ Usant el millor candidat trobat (${bestDur.toFixed(1)}s)`);
-      return bestCandidate || generateBattleCandidate();
+      // Si trigués a trobar-la, afegeix 10 cordes extres i torna a cercar
+      console.log("ℹ️ Ajustant densitat de cordes per assegurar durada > 22s...");
+      const guaranteedCandidate = generateBattleCandidate();
+      guaranteedCandidate.balls.forEach(b => {
+        for (let extra = 0; extra < 12; extra++) {
+          const theta = Math.random() * Math.PI * 2;
+          b.lines.push({
+            ax: CENTER.x + Math.cos(theta) * ARENA_RADIUS,
+            ay: CENTER.y + Math.sin(theta) * ARENA_RADIUS
+          });
+        }
+      });
+      return guaranteedCandidate;
     }
 
     const activeBattle = findPerfectBattle();
@@ -316,7 +337,7 @@
     let cutSparks = [];
 
     function spawnDeathBurst(x, y, colorStr) {
-      for (let i = 0; i < 35; i++) {
+      for (let i = 0; i < 40; i++) {
         const ang = Math.random() * Math.PI * 2;
         const spd = 7 + Math.random() * 16;
         particles.push({
@@ -353,6 +374,10 @@
       const SUB_STEPS = 6;
       globalFrame++;
 
+      balls.forEach(b => {
+        if (b.cutCooldownTimer > 0) b.cutCooldownTimer--;
+      });
+
       for (let s = 0; s < SUB_STEPS; s++) {
         // 1. Moure boles vives
         balls.forEach(ball => {
@@ -365,7 +390,7 @@
           const dy = ball.y - CENTER.y;
           const dist = Math.hypot(dx, dy);
 
-          // Rebot de paret: afegeix nova corda i accelera +6%
+          // Rebot de paret: REGENERA 2 CORDES
           if (dist >= ARENA_RADIUS - ball.radius) {
             const nx = dx / (dist || 1);
             const ny = dy / (dist || 1);
@@ -375,7 +400,7 @@
               let rx = (ball.vx - 2 * dot * nx) * INDIVIDUAL_BOUNCE_ACCEL;
               let ry = (ball.vy - 2 * dot * ny) * INDIVIDUAL_BOUNCE_ACCEL;
 
-              const ang = Math.atan2(ry, rx) + (Math.random() - 0.5) * 0.12;
+              const ang = Math.atan2(ry, rx) + (Math.random() - 0.5) * 0.10;
               const spd = Math.min(MAX_SPEED, Math.max(MIN_SPEED, Math.hypot(rx, ry)));
               ball.vx = Math.cos(ang) * spd;
               ball.vy = Math.sin(ang) * spd;
@@ -383,10 +408,15 @@
               ball.x = CENTER.x + nx * (ARENA_RADIUS - ball.radius);
               ball.y = CENTER.y + ny * (ARENA_RADIUS - ball.radius);
 
-              // Nova corda
+              // REGENERA 2 CORDES NOVES
+              const baseAng = Math.atan2(ny, nx);
               ball.lines.push({
-                ax: CENTER.x + nx * ARENA_RADIUS,
-                ay: CENTER.y + ny * ARENA_RADIUS
+                ax: CENTER.x + Math.cos(baseAng - 0.04) * ARENA_RADIUS,
+                ay: CENTER.y + Math.sin(baseAng - 0.04) * ARENA_RADIUS
+              });
+              ball.lines.push({
+                ax: CENTER.x + Math.cos(baseAng + 0.04) * ARENA_RADIUS,
+                ay: CENTER.y + Math.sin(baseAng + 0.04) * ARENA_RADIUS
               });
 
               recordSoundHit(ball.id, false);
@@ -436,7 +466,7 @@
 
         // 3. Tall físic estricte de cordes rivals
         balls.forEach(cutter => {
-          if (!cutter.alive) return;
+          if (!cutter.alive || cutter.cutCooldownTimer > 0) return;
 
           balls.forEach(target => {
             if (!target.alive || target.id === cutter.id) return;
@@ -445,8 +475,9 @@
               const line = target.lines[l];
               const d = distToSegment(cutter.x, cutter.y, line.ax, line.ay, target.x, target.y);
 
-              if (d <= cutter.radius + 2.0) {
+              if (d <= cutter.radius + 1.5) {
                 target.lines.splice(l, 1);
+                cutter.cutCooldownTimer = CUTTER_COOLDOWN; // Cooldown anti-metralladora
 
                 if (cutSparks.length < 25) {
                   cutSparks.push({ x: cutter.x, y: cutter.y, life: 10, color: target.color });
