@@ -110,17 +110,20 @@ def run():
 
         raw_video = "raw_simulation.webm"
 
-        # Comença exactament quan arrenca el gravador
+        # Espera que la partida arribi al desenllaç
         with page.expect_download(timeout=90000) as download_info:
-            print("Iniciant simulació i gravació sincronitzades al segon 0...")
+            print("Iniciant duel i gravació...")
             page.evaluate("window.startRecording()")
 
         sound_events = page.evaluate("window.soundEvents || []")
         actual_duration = page.evaluate("window.actualDuration || 15")
+        winner_name = page.evaluate("window.winnerName || 'DESCONEGUT'")
 
         download = download_info.value
         download.save_as(raw_video)
-        print(f"Partida finalitzada en {actual_duration:.1f} segons reals!")
+        print(
+            f"Duel completat! Guanyador: {winner_name} en {actual_duration:.1f} segons."
+        )
         browser.close()
 
     # Generar àudio amb la durada exacta
@@ -161,7 +164,7 @@ def run():
         if os.path.exists(tmp):
             os.remove(tmp)
 
-    # Enviar a Telegram
+    # Enviar a Telegram amb el guanyador indicat
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID and os.path.exists(final_mp4):
         print("Enviant el vídeo per Telegram...")
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVideo"
@@ -170,7 +173,7 @@ def run():
                 url,
                 data={
                     "chat_id": TELEGRAM_CHAT_ID,
-                    "caption": f"🎬 Vídeo finalitzat!\n⏱️ Durada real: {actual_duration:.1f}s (duel complet)\nCanal: @bouncelab.tv 🔥",
+                    "caption": f"🎬 Duel finalitzat!\n🏆 Guanyador: {winner_name}!\n⏱️ Durada: {actual_duration:.1f}s\nCanal: @bouncelab.tv 🔥",
                     "supports_streaming": True,
                 },
                 files={"video": f},
