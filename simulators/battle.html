@@ -35,7 +35,7 @@
     const CENTER = { x: WIDTH / 2, y: HEIGHT / 2 };
     const ARENA_RADIUS = 465;
 
-    // LÍMITS DE DURADA (18s a 75s)
+    // LÍMITS DE DURADA (18s a 75s = < 1.5 minuts)
     const MIN_DURATION = 18;
     const MAX_DURATION = 75;
 
@@ -79,13 +79,15 @@
     ];
 
     // ==========================================
-    // 2. FÍSICA ZERO-GRAVITY (EVITA ENCALLAR-SE A BAIX)
+    // 2. FÍSICA: VELOCITAT INICIAL IDÈNTICA
     // ==========================================
-    const GRAVITY = 0.0;                   // Gravetat 0: les boles volen per tot el cercle en 360°
-    const MIN_SPEED = 7.5;                 // Velocitat mínima garantida (mai s'adormen)
-    const INDIVIDUAL_BOUNCE_ACCEL = 1.028; // +2.8% a cada rebot de paret
-    const MAX_SPEED = 44;
+    const GRAVITY = 0.0;                   // Zero gravity: línia recta en 360 graus
+    const INITIAL_SPEED = 8.5;             // VELOCITAT INICIAL EXACTAMENT IGUAL PER A TOTES
+    const MIN_SPEED = 8.0;                 // Terra mínim de velocitat
+    const INDIVIDUAL_BOUNCE_ACCEL = 1.025; // +2.5% per rebot de paret
+    const MAX_SPEED = 42;
     const BALL_RADIUS = 20;
+    const CUT_COOLDOWN_FRAMES = 14;        // Cooldown (~0.23s) entre pèrdua de cordes per evitar morts instantànies
 
     function distToSegment(px, py, x1, y1, x2, y2) {
       const dx = x2 - x1;
@@ -114,9 +116,8 @@
         const bx = CENTER.x + Math.cos(midAngle) * spawnDist;
         const by = CENTER.y + Math.sin(midAngle) * spawnDist;
 
-        // Velocitat inicial calmada i en totes direccions
+        // MATEIXA VELOCITAT PER A TOTES, NOMÉS CANVIA LA DIRECCIÓ INICIAL
         const moveAngle = Math.random() * Math.PI * 2;
-        const initialSpeed = 7.5 + Math.random() * 1.5;
 
         const lines = [];
         for (let a = 0; a < anchorsPerBall; a++) {
@@ -135,11 +136,12 @@
           glowColor: col.glow,
           x: bx,
           y: by,
-          vx: Math.cos(moveAngle) * initialSpeed,
-          vy: Math.sin(moveAngle) * initialSpeed,
+          vx: Math.cos(moveAngle) * INITIAL_SPEED,
+          vy: Math.sin(moveAngle) * INITIAL_SPEED,
           radius: BALL_RADIUS,
           lines: lines,
           alive: true,
+          invulnerableFrames: 0,
           trail: []
         });
       }
@@ -148,7 +150,7 @@
     }
 
     // ==========================================
-    // 3. PRE-SIMULACIÓ (FILTRE 18s - 75s)
+    // 3. PRE-SIMULACIÓ AMB COOLDOWN DE CORDA
     // ==========================================
     function simulateBattle(setup, maxAllowedSec) {
       const testBalls = setup.balls.map(b => ({
@@ -158,6 +160,7 @@
         vy: b.vy,
         radius: b.radius,
         alive: true,
+        invulnerableFrames: 0,
         lines: b.lines.map(l => ({ ax: l.ax, ay: l.ay }))
       }));
 
@@ -169,8 +172,15 @@
       while (frame < maxFrames) {
         frame++;
 
+        // Descomptar cooldown de cordes per fotograma
+        for (let b = 0; b < testBalls.length; b++) {
+          if (testBalls[b].invulnerableFrames > 0) {
+            testBalls[b].invulnerableFrames--;
+          }
+        }
+
         for (let s = 0; s < SUB_STEPS; s++) {
-          // 1. Moure boles (zero gravity)
+          // 1. Moure boles vives
           for (let b = 0; b < testBalls.length; b++) {
             const ball = testBalls[b];
             if (!ball.alive) continue;
@@ -182,7 +192,6 @@
             const dy = ball.y - CENTER.y;
             const dist = Math.hypot(dx, dy);
 
-            // Rebot de paret
             if (dist >= ARENA_RADIUS - ball.radius) {
               const nx = dx / (dist || 1);
               const ny = dy / (dist || 1);
@@ -192,7 +201,6 @@
                 let rx = (ball.vx - 2 * dot * nx) * INDIVIDUAL_BOUNCE_ACCEL;
                 let ry = (ball.vy - 2 * dot * ny) * INDIVIDUAL_BOUNCE_ACCEL;
 
-                // Micro-variació d'angle per evitar bucles infinits
                 const ang = Math.atan2(ry, rx) + (Math.random() - 0.5) * 0.12;
                 const spd = Math.min(MAX_SPEED, Math.max(MIN_SPEED, Math.hypot(rx, ry)));
                 ball.vx = Math.cos(ang) * spd;
@@ -209,7 +217,7 @@
             }
           }
 
-          // 2. Rebot elàstic entre boles
+          // 2. Rebot elàstic entre boles (billar)
           for (let i = 0; i < testBalls.length; i++) {
             for (let j = i + 1; j < testBalls.length; j++) {
               const b1 = testBalls[i], b2 = testBalls[j];
@@ -244,7 +252,7 @@
             }
           }
 
-          // 3. Tallar cordes
+          // 3. Tallar cordes només en contacte físic amb límit de cooldown
           for (let b = 0; b < testBalls.length; b++) {
             const cutter = testBalls[b];
             if (!cutter.alive) continue;
@@ -252,7 +260,7 @@
             for (let t = 0; t < testBalls.length; t++) {
               if (b === t) continue;
               const target = testBalls[t];
-              if (!target.alive) continue;
+              if (!target.alive || target.invulnerableFrames > 0) continue;
 
               for (let l = target.lines.length - 1; l >= 0; l--) {
                 const line = target.lines[l];
@@ -260,6 +268,7 @@
 
                 if (d <= cutter.radius) {
                   target.lines.splice(l, 1);
+                  target.invulnerableFrames = CUT_COOLDOWN_FRAMES; // 14 fotogrames de marge
                   if (target.lines.length === 0) {
                     target.alive = false;
                   }
@@ -340,8 +349,13 @@
       const SUB_STEPS = 6;
       globalFrame++;
 
+      // Descomptar cooldown de protecció de corda
+      balls.forEach(ball => {
+        if (ball.invulnerableFrames > 0) ball.invulnerableFrames--;
+      });
+
       for (let s = 0; s < SUB_STEPS; s++) {
-        // 1. Moure boles vives (zero gravity: línia recta constant)
+        // 1. Moure boles vives
         balls.forEach(ball => {
           if (!ball.alive) return;
 
@@ -352,7 +366,7 @@
           const dy = ball.y - CENTER.y;
           const dist = Math.hypot(dx, dy);
 
-          // Rebot de paret amb lleugera variació angular
+          // Rebot de paret: acceleració individual
           if (dist >= ARENA_RADIUS - ball.radius) {
             const nx = dx / (dist || 1);
             const ny = dy / (dist || 1);
@@ -370,7 +384,7 @@
               ball.x = CENTER.x + nx * (ARENA_RADIUS - ball.radius);
               ball.y = CENTER.y + ny * (ARENA_RADIUS - ball.radius);
 
-              // Nova corda
+              // Nova corda afegida
               ball.lines.push({
                 ax: CENTER.x + nx * ARENA_RADIUS,
                 ay: CENTER.y + ny * ARENA_RADIUS
@@ -421,12 +435,12 @@
           }
         }
 
-        // 3. Tallar cordes
+        // 3. Tallar cordes només si es toquen físicament i respectant el cooldown
         balls.forEach(cutter => {
           if (!cutter.alive) return;
 
           balls.forEach(target => {
-            if (!target.alive || target.id === cutter.id) return;
+            if (!target.alive || target.id === cutter.id || target.invulnerableFrames > 0) return;
 
             for (let l = target.lines.length - 1; l >= 0; l--) {
               const line = target.lines[l];
@@ -434,12 +448,13 @@
 
               if (d <= cutter.radius) {
                 target.lines.splice(l, 1);
+                target.invulnerableFrames = CUT_COOLDOWN_FRAMES; // Protecció temporal anti-metralladora
 
                 if (cutSparks.length < 25) {
                   cutSparks.push({ x: cutter.x, y: cutter.y, life: 10, color: target.color });
                 }
 
-                // Eliminació en quedar-se a 0 cordes
+                // Si es queda a 0 cordes -> MORT
                 if (target.lines.length === 0) {
                   target.alive = false;
                   spawnDeathBurst(target.x, target.y, target.color);
@@ -485,7 +500,7 @@
       ctx.fillStyle = '#030712';
       ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
-      // 1. DIBUIX DE CORDES OPTIMITZAT
+      // 1. Dibuix de cordes optimitzat
       balls.forEach(ball => {
         if (!ball.alive || ball.lines.length === 0) return;
 
@@ -585,6 +600,7 @@
         ctx.shadowColor = 'rgba(255, 255, 255, 0.6)';
         ctx.fillText('LAST ONE STANDING! ⚔️', CENTER.x, 230);
 
+        // Marcador de línies de cadascuna
         ctx.font = '700 30px sans-serif';
         const spacingX = Math.min(130, (WIDTH - 120) / balls.length);
         const startX = CENTER.x - ((balls.length - 1) * spacingX) / 2;
@@ -602,6 +618,7 @@
       }
       ctx.restore();
 
+      // Indicador inferior
       const remainingAlive = balls.filter(b => b.alive).length;
       ctx.font = '700 34px sans-serif';
       ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
