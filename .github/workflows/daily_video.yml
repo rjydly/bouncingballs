@@ -25,8 +25,8 @@ jobs:
       - name: Instal·lar llibreries Python
         run: pip install playwright requests
 
-      - name: Instal·lar Chromium per Playwright
-        run: playwright install --with-deps chromium
+      - name: Instal·lar navegador Firefox per Playwright
+        run: playwright install --with-deps firefox
 
       - name: Generar vídeo amb HTML5 i enviar a Telegram
         env:
