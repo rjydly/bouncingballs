@@ -36,10 +36,13 @@
 
     window.soundEvents = [];
     window.actualDuration = 0;
+    window.winnerName = ""; // Registre del guanyador per a Telegram
+
     let startTime = null;
     let globalFrame = 0;
     let isFinished = false;
-    let isRunning = false; // CONGELAT FINS QUE COMENÇA LA GRAVACIÓ
+    let isRunning = false;
+    let winner = null;
 
     function recordSoundHit(noteIndex, isEscape) {
       if (startTime !== null) {
@@ -53,14 +56,13 @@
     }
 
     // ==========================================
-    // 1. FÍSICA I PILOTES ASIMÈTRIQUES
+    // 1. FÍSICA I PILOTES ENFRONTADES
     // ==========================================
     const GRAVITY = 0.75;
     const BOUNCE_ACCEL = 1.012;
     const MAX_SPEED = 46;
     const BALL_RADIUS = 18;
 
-    // Angles completament asimètrics
     const angle1 = Math.random() * Math.PI * 2;
     const speed1 = 28 + Math.random() * 5;
     const angle2 = (angle1 + Math.PI * 0.45 + Math.random() * Math.PI * 0.7) % (Math.PI * 2);
@@ -95,7 +97,7 @@
       }
     ];
 
-    // 4 ANELLS AMB FORAT DESAFIANT (24 graus per generar tensió i rebots)
+    // 4 ANELLS
     const RING_COUNT = 4;
     const BASE_RADIUS = 160;
     const SPACING = 72;
@@ -106,7 +108,7 @@
       rings.push({
         radius: BASE_RADIUS + i * SPACING,
         gapAngle: Math.random() * Math.PI * 2,
-        gapSize: 0.42, // ~24 graus (precís, no massa fàcil)
+        gapSize: 0.42, // ~24 graus
         speed: (Math.random() > 0.5 ? 1 : -1) * (0.024 + i * 0.006),
         hue: hue,
         color: `hsl(${hue}, 100%, 65%)`,
@@ -117,8 +119,8 @@
 
     let particles = [];
 
-    function spawnBurst(x, y, hue) {
-      for (let i = 0; i < 50; i++) {
+    function spawnBurst(x, y, colorStr) {
+      for (let i = 0; i < 45; i++) {
         const ang = Math.random() * Math.PI * 2;
         const spd = 8 + Math.random() * 16;
         particles.push({
@@ -126,16 +128,31 @@
           vx: Math.cos(ang) * spd,
           vy: Math.sin(ang) * spd,
           life: 40,
-          color: `hsl(${hue}, 100%, 75%)`
+          color: colorStr
+        });
+      }
+    }
+
+    function spawnWinnerConfetti(winnerColor) {
+      for (let i = 0; i < 90; i++) {
+        const ang = Math.random() * Math.PI * 2;
+        const spd = 10 + Math.random() * 24;
+        particles.push({
+          x: CENTER.x,
+          y: CENTER.y,
+          vx: Math.cos(ang) * spd,
+          vy: Math.sin(ang) * spd,
+          life: 65,
+          color: i % 2 === 0 ? winnerColor : '#ffffff'
         });
       }
     }
 
     // ==========================================
-    // 2. FÍSICA BLINDADA SENSE FUGUES
+    // 2. DETECCIÓ I CORONACIÓ DEL GUANYADOR
     // ==========================================
     function updatePhysics() {
-      if (!isRunning) return; // NO MOU RES FINS QUE ARRENCA LA GRAVACIÓ
+      if (!isRunning) return;
 
       const SUB_STEPS = 8;
       globalFrame++;
@@ -175,15 +192,36 @@
               const inGap = diff <= (ring.gapSize / 2);
 
               if (inGap) {
+                // S'ha trencat l'anell
                 ring.alive = false;
                 recordSoundHit(idx, true);
-                spawnBurst(ball.x, ball.y, ring.hue);
+                spawnBurst(ball.x, ball.y, ring.color);
+
+                // COMPROVACIÓ DE GUANYADOR: És l'últim anell que quedava?
+                const remaining = rings.filter(r => r.alive).length;
+                if (remaining === 0 && !isFinished) {
+                  // Aquesta pilota ha trencat l'últim mur i ha escapat primer!
+                  winner = ball;
+                  window.winnerName = ball.name;
+                  isFinished = true;
+
+                  // So especial de victòria i gran explosió de confeti del seu color
+                  recordSoundHit(10, true);
+                  spawnWinnerConfetti(ball.color);
+
+                  // 2.2 segons de celebració abans de tancar
+                  setTimeout(() => {
+                    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                      window.actualDuration = (performance.now() - startTime) / 1000;
+                      mediaRecorder.stop();
+                    }
+                  }, 2200);
+                }
               } else {
-                // BLINDATGE DE REBOT: Es basa en la direcció del vector de velocitat (dot)
+                // Rebot blindat
                 const dot = ball.vx * nx + ball.vy * ny;
 
                 if (dot > 0) {
-                  // La bola anava cap enfora -> rebot cap endins obligatori
                   ball.vx = (ball.vx - 2 * dot * nx) * BOUNCE_ACCEL;
                   ball.vy = (ball.vy - 2 * dot * ny) * BOUNCE_ACCEL;
                   ball.x = CENTER.x + nx * (contactDist - ball.radius);
@@ -192,7 +230,6 @@
                   ring.flash = 1.0;
                   recordSoundHit(idx, false);
                 } else if (dot < 0) {
-                  // La bola anava cap endins -> rebot cap enfora obligatori
                   ball.vx = (ball.vx - 2 * dot * nx) * BOUNCE_ACCEL;
                   ball.vy = (ball.vy - 2 * dot * ny) * BOUNCE_ACCEL;
                   ball.x = CENTER.x + nx * (contactDist + ball.radius);
@@ -249,22 +286,10 @@
         ball.trail.push({ x: ball.x, y: ball.y, hue: curHue });
         if (ball.trail.length > 20) ball.trail.shift();
       });
-
-      // Victòria: Quan tots 4 anells han estat trencats
-      const allRingsCleared = rings.every(r => !r.alive);
-      if (allRingsCleared && !isFinished) {
-        isFinished = true;
-        setTimeout(() => {
-          if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-            window.actualDuration = (performance.now() - startTime) / 1000;
-            mediaRecorder.stop();
-          }
-        }, 1800);
-      }
     }
 
     // ==========================================
-    // 3. RENDERITZAT VISUAL
+    // 3. RENDERITZAT VISUAL AMB CARTELL DE GUANYADOR
     // ==========================================
     function render() {
       ctx.fillStyle = '#030712';
@@ -335,19 +360,31 @@
       ctx.textAlign = 'center';
       ctx.fillText('bouncelab.tv', CENTER.x, CENTER.y + 12);
 
-      // Ganxo de text
-      ctx.font = '800 62px sans-serif';
-      ctx.fillStyle = '#ffffff';
-      ctx.shadowBlur = 18;
-      ctx.shadowColor = 'rgba(255, 255, 255, 0.6)';
+      // TEXT VIRAL: DURANT LA PARTIDA I AL DESENLLAÇ
+      ctx.save();
       ctx.textAlign = 'center';
 
-      if (isFinished) {
-        ctx.fillStyle = '#93d119';
-        ctx.shadowColor = '#93d119';
-        ctx.fillText('ESCAPED! 🏆', CENTER.x, 240);
+      if (isFinished && winner) {
+        // CORONACIÓ DEL GUANYADOR AMB EL SEU COLOR NEÓ
+        ctx.font = '900 68px sans-serif';
+        ctx.fillStyle = winner.color;
+        ctx.shadowBlur = 28;
+        ctx.shadowColor = winner.color;
+        ctx.fillText(`${winner.name} WINS! 🏆`, CENTER.x, 240);
+
+        ctx.font = '800 36px sans-serif';
+        ctx.fillStyle = '#ffffff';
+        ctx.shadowBlur = 12;
+        ctx.shadowColor = '#ffffff';
+        ctx.fillText('ESCAPED FIRST!', CENTER.x, 300);
       } else {
+        // ENFRONTAMENT
+        ctx.font = '800 62px sans-serif';
+        ctx.fillStyle = '#ffffff';
+        ctx.shadowBlur = 18;
+        ctx.shadowColor = 'rgba(255, 255, 255, 0.6)';
         ctx.fillText('WHICH ONE ESCAPES?', CENTER.x, 240);
+
         ctx.font = '700 32px sans-serif';
         ctx.fillStyle = '#00f2fe';
         ctx.fillText('CYAN', CENTER.x - 110, 292);
@@ -356,12 +393,13 @@
         ctx.fillStyle = '#ff007f';
         ctx.fillText('PINK', CENTER.x + 110, 292);
       }
+      ctx.restore();
 
-      // Comptador d'anells
+      // Comptador d'anells restants inferior
       const remaining = rings.filter(r => r.alive).length;
       ctx.font = '700 36px sans-serif';
       ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
-      ctx.shadowBlur = 0;
+      ctx.textAlign = 'center';
       ctx.fillText(`WALLS LEFT: ${remaining}`, CENTER.x, HEIGHT - 240);
 
       updatePhysics();
@@ -375,7 +413,6 @@
     let recordedChunks = [];
 
     window.startRecording = function() {
-      // Arrenca exactament quan comença el gravador
       startTime = performance.now();
       isRunning = true;
       window.soundEvents = [];
@@ -413,7 +450,6 @@
 
       mediaRecorder.start();
 
-      // Topall màxim de 60 segons per seguretat
       setTimeout(() => {
         if (mediaRecorder.state !== 'inactive') {
           window.actualDuration = (performance.now() - startTime) / 1000;
@@ -422,7 +458,6 @@
       }, 60000);
     };
 
-    // Dibuixa l'escena inicial estàtica
     render();
   </script>
 </body>
