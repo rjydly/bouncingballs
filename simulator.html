@@ -36,7 +36,7 @@
 
     window.soundEvents = [];
     window.actualDuration = 0;
-    window.winnerName = ""; // Registre del guanyador per a Telegram
+    window.winnerName = "";
 
     let startTime = null;
     let globalFrame = 0;
@@ -56,7 +56,7 @@
     }
 
     // ==========================================
-    // 1. FÍSICA I PILOTES ENFRONTADES
+    // 1. FÍSICA I PILOTES ASIMÈTRIQUES
     // ==========================================
     const GRAVITY = 0.75;
     const BOUNCE_ACCEL = 1.012;
@@ -97,7 +97,6 @@
       }
     ];
 
-    // 4 ANELLS
     const RING_COUNT = 4;
     const BASE_RADIUS = 160;
     const SPACING = 72;
@@ -108,7 +107,7 @@
       rings.push({
         radius: BASE_RADIUS + i * SPACING,
         gapAngle: Math.random() * Math.PI * 2,
-        gapSize: 0.42, // ~24 graus
+        gapSize: 0.42,
         speed: (Math.random() > 0.5 ? 1 : -1) * (0.024 + i * 0.006),
         hue: hue,
         color: `hsl(${hue}, 100%, 65%)`,
@@ -149,7 +148,7 @@
     }
 
     // ==========================================
-    // 2. DETECCIÓ I CORONACIÓ DEL GUANYADOR
+    // 2. DETECCIÓ I FÍSICA
     // ==========================================
     function updatePhysics() {
       if (!isRunning) return;
@@ -192,24 +191,19 @@
               const inGap = diff <= (ring.gapSize / 2);
 
               if (inGap) {
-                // S'ha trencat l'anell
                 ring.alive = false;
                 recordSoundHit(idx, true);
                 spawnBurst(ball.x, ball.y, ring.color);
 
-                // COMPROVACIÓ DE GUANYADOR: És l'últim anell que quedava?
                 const remaining = rings.filter(r => r.alive).length;
                 if (remaining === 0 && !isFinished) {
-                  // Aquesta pilota ha trencat l'últim mur i ha escapat primer!
                   winner = ball;
                   window.winnerName = ball.name;
                   isFinished = true;
 
-                  // So especial de victòria i gran explosió de confeti del seu color
                   recordSoundHit(10, true);
                   spawnWinnerConfetti(ball.color);
 
-                  // 2.2 segons de celebració abans de tancar
                   setTimeout(() => {
                     if (mediaRecorder && mediaRecorder.state !== 'inactive') {
                       window.actualDuration = (performance.now() - startTime) / 1000;
@@ -218,7 +212,6 @@
                   }, 2200);
                 }
               } else {
-                // Rebot blindat
                 const dot = ball.vx * nx + ball.vy * ny;
 
                 if (dot > 0) {
@@ -243,7 +236,7 @@
           });
         });
 
-        // Xoc elàstic entre boles
+        // Xoc entre pilotes
         const b1 = balls[0], b2 = balls[1];
         const cdx = b2.x - b1.x;
         const cdy = b2.y - b1.y;
@@ -289,7 +282,7 @@
     }
 
     // ==========================================
-    // 3. RENDERITZAT VISUAL AMB CARTELL DE GUANYADOR
+    // 3. RENDERITZAT VISUAL
     // ==========================================
     function render() {
       ctx.fillStyle = '#030712';
@@ -360,12 +353,11 @@
       ctx.textAlign = 'center';
       ctx.fillText('bouncelab.tv', CENTER.x, CENTER.y + 12);
 
-      // TEXT VIRAL: DURANT LA PARTIDA I AL DESENLLAÇ
+      // GANXO DE TEXT MODIFICAT
       ctx.save();
       ctx.textAlign = 'center';
 
       if (isFinished && winner) {
-        // CORONACIÓ DEL GUANYADOR AMB EL SEU COLOR NEÓ
         ctx.font = '900 68px sans-serif';
         ctx.fillStyle = winner.color;
         ctx.shadowBlur = 28;
@@ -378,12 +370,12 @@
         ctx.shadowColor = '#ffffff';
         ctx.fillText('ESCAPED FIRST!', CENTER.x, 300);
       } else {
-        // ENFRONTAMENT
-        ctx.font = '800 62px sans-serif';
+        // "WHICH ONE ESCAPES FIRST?"
+        ctx.font = '800 56px sans-serif';
         ctx.fillStyle = '#ffffff';
         ctx.shadowBlur = 18;
         ctx.shadowColor = 'rgba(255, 255, 255, 0.6)';
-        ctx.fillText('WHICH ONE ESCAPES?', CENTER.x, 240);
+        ctx.fillText('WHICH ONE ESCAPES FIRST?', CENTER.x, 240);
 
         ctx.font = '700 32px sans-serif';
         ctx.fillStyle = '#00f2fe';
@@ -399,7 +391,7 @@
       const remaining = rings.filter(r => r.alive).length;
       ctx.font = '700 36px sans-serif';
       ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
-      ctx.textAlign = 'center';
+      ctx.shadowBlur = 0;
       ctx.fillText(`WALLS LEFT: ${remaining}`, CENTER.x, HEIGHT - 240);
 
       updatePhysics();
