@@ -198,7 +198,6 @@ def synthesize_soundtrack(
             n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
             t = np.linspace(0, note_len, n_samples, False)
 
-            # Baixos profunds (55Hz) + soroll blanc de fallada digital + pols d'alarma
             sub_bass = 0.7 * np.sin(2 * np.pi * 55 * t) * np.exp(-1.5 * t)
             noise = (np.random.rand(n_samples) - 0.5) * 0.45 * np.exp(-3.0 * t)
             alarm = 0.5 * np.sin(2 * np.pi * 880 * t * (1 + 0.5 * np.sin(2 * np.pi * 8 * t))) * np.exp(-1.8 * t)
@@ -206,17 +205,17 @@ def synthesize_soundtrack(
             glitch_audio = sub_bass + noise + alarm
             audio_data[start_sample : start_sample + n_samples] += glitch_audio * 2.2
         elif ev_type == "spawn":
-            # So de multiplicació / spawn de noves boles (+3)
+            # So de multiplicació / spawn (+3)
             note_len = 0.12
             n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
             t = np.linspace(0, note_len, n_samples, False)
             spawn_tone = (
-                0.6 * np.sin(2 * np.pi * 987.77 * t)  # B5
-                + 0.4 * np.sin(2 * np.pi * 1318.51 * t) # E6
+                0.6 * np.sin(2 * np.pi * 987.77 * t)
+                + 0.4 * np.sin(2 * np.pi * 1318.51 * t)
             ) * np.exp(-22 * t)
             audio_data[start_sample : start_sample + n_samples] += spawn_tone * 1.6
         else:
-            # Rebot harmònic curt
+            # Rebot harmònic
             freq = FREQUENCIES[note_idx % len(FREQUENCIES)]
             note_len = 0.06
             n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
@@ -237,15 +236,15 @@ def synthesize_soundtrack(
         wf.setframerate(SAMPLE_RATE)
         wf.writeframes(audio_int16.tobytes())
 
-    print(f"🎵 Àudio sintetitzat correctament amb efecte de col·lapse digital ({duration_sec:.1f}s).")
+    print(f"🎵 Àudio sintetitzat correctament ({duration_sec:.1f}s).")
 
 
 def resolve_simulation_url():
     possible_candidates = [
-        f"{SELECTED_MODE}.html",
         os.path.join("simulators", f"{SELECTED_MODE}.html"),
-        "spikes.html",
+        f"{SELECTED_MODE}.html",
         os.path.join("simulators", "spikes.html"),
+        "spikes.html",
     ]
 
     for rel_path in possible_candidates:
@@ -279,6 +278,10 @@ def run():
 
         page = context.new_page()
 
+        # Capturem qualsevol error de consola de JavaScript per diagnosticar
+        page.on("pageerror", lambda err: print(f"❌ ERROR JS AL NAVEGADOR: {err}"))
+        page.on("console", lambda msg: print(f"🖥️ CONSOLE [{msg.type}]: {msg.text}"))
+
         cache_buster = random.randint(100000, 999999)
         final_sim_url = f"{sim_url}?cb={cache_buster}"
 
@@ -287,10 +290,15 @@ def run():
         if response and response.status >= 400:
             raise RuntimeError(f"Error HTTP {response.status} en carregar {final_sim_url}!")
 
-        page.wait_for_timeout(1000)
-
-        is_ready = page.evaluate("typeof window.startRecording === 'function'")
-        if not is_ready:
+        # Esperem de forma robusta fins que window.startRecording estigui disponible
+        try:
+            page.wait_for_function("typeof window.startRecording === 'function'", timeout=6000)
+            print("✅ Funció window.startRecording trobada i llesta!")
+        except Exception:
+            title = page.title()
+            body_preview = page.evaluate("document.body ? document.body.innerHTML.slice(0, 300) : 'BUIT'")
+            print(f"⚠️ Títol de la pàgina: '{title}'")
+            print(f"⚠️ Contingut HTML carregat: {body_preview}")
             raise RuntimeError("window.startRecording no està definida al fitxer HTML!")
 
         raw_video = "raw_simulation.webm"
