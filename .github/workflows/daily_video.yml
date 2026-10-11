@@ -1,18 +1,47 @@
-name: Generate and Send Daily Video
+name: Generate and Multi-Publish Viral Video
 
 on:
   schedule:
-    # S'executa automàticament cada dia a les 10:00 UTC (12:00h peninsular)
-    - cron: '0 10 * * *'
-  workflow_dispatch: # Permet executar-lo manualment amb un sol clic
+    # 3 cops al dia (Hora EUA: 10:00 AM, 3:00 PM i 7:00 PM EDT)
+    - cron: '0 14,19,23 * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Mode a executar (deixa "auto" per a rotació):'
+        required: true
+        default: 'auto'
+        type: choice
+        options:
+          - auto
+          - multiply
+          - spikes
+          - accumulation
+          - tracker
+          - classic
+      force_snapchat:
+        description: 'Forçar publicació a Snapchat en aquest llançament?'
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write  # Necessari per fer push del vídeo a la carpeta videos/
 
 jobs:
-  render_and_send:
+  render_and_publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - name: Baixar repositori
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Configurar Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Configurar Python
         uses: actions/setup-python@v5
@@ -23,14 +52,30 @@ jobs:
       - name: Instal·lar FFmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
-      - name: Instal·lar llibreries Python
+      - name: Instal·lar dependències Python
         run: pip install -r requirements.txt
 
-      - name: Instal·lar navegador Firefox per Playwright
+      - name: Instal·lar Firefox per a Playwright
         run: playwright install --with-deps firefox
 
-      - name: Generar vídeo dinàmic i enviar a Telegram
+      - name: Executar generador i distribuïdor social
         env:
+          # Repositori
+          GITHUB_REPO: ${{ github.repository }}
+          SELECTED_MODE: ${{ github.event.inputs.mode || 'auto' }}
+          FORCE_SNAPCHAT: ${{ github.event.inputs.force_snapchat || 'false' }}
+          # Zernio (Instagram i Facebook)
+          ZERNIO_API_KEY: ${{ secrets.ZERNIO_API_KEY }}
+          ZERNIO_INSTAGRAM_ACCOUNT_ID: ${{ secrets.ZERNIO_INSTAGRAM_ACCOUNT_ID }}
+          ZERNIO_FACEBOOK_ACCOUNT_ID: ${{ secrets.ZERNIO_FACEBOOK_ACCOUNT_ID }}
+          # Buffer (TikTok i YouTube)
+          BUFFER_ACCESS_TOKEN: ${{ secrets.BUFFER_ACCESS_TOKEN }}
+          BUFFER_TIKTOK_CHANNEL_ID: ${{ secrets.BUFFER_TIKTOK_CHANNEL_ID }}
+          BUFFER_YOUTUBE_CHANNEL_ID: ${{ secrets.BUFFER_YOUTUBE_CHANNEL_ID }}
+          # bundle.social (Snapchat Spotlight)
+          BUNDLE_SOCIAL_API_KEY: ${{ secrets.BUNDLE_SOCIAL_API_KEY }}
+          BUNDLE_SOCIAL_TEAM_ID: ${{ secrets.BUNDLE_SOCIAL_TEAM_ID }}
+          # Telegram (Report i backup)
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python main.py
