@@ -78,6 +78,15 @@
       { color: '#1e90ff', glow: '#1e90ff' }
     ];
 
+    // Colors aleatoris per al gradient de l'anell (alta visibilitat contra el fons fosc)
+    const shuffledColors = [...NEON_PALETTE].sort(() => Math.random() - 0.5);
+    const RING_GRADIENT_COLORS = [
+      shuffledColors[0].color,
+      shuffledColors[1].color,
+      shuffledColors[2].color
+    ];
+    const RING_GLOW_COLOR = shuffledColors[1].glow;
+
     window.soundEvents = [];
     window.actualDuration = 0;
     window.winnerName = "";
@@ -192,12 +201,10 @@
 
           // 2. Comprovació d'escletxa oberta (PAS LLIURE TOTAL)
           if (isInGap(hitAng, gapAngle)) {
-            // Quan la bola creua la vora exterior de l'anell, ha escapat!
             if (dist >= ARENA_RADIUS) {
               if (deadBalls.length >= MIN_SACRIFICES_REQUIRED && simTime >= STRICT_MIN_DURATION && simTime <= STRICT_MAX_DURATION) {
                 return { success: true, duration: simTime, deadCount: deadBalls.length, seed, gapAngle, vx0, vy0 };
               }
-              // Si ha passat massa aviat, la partida es descarta
               return { success: false, duration: simTime };
             }
           } else {
@@ -299,7 +306,7 @@
           vx: Math.cos(ang) * spd,
           vy: Math.sin(ang) * spd,
           life: 80,
-          color: ['#00f2fe', '#8b5cf6', '#d946ef', '#f43f5e', '#ffffff'][i % 5]
+          color: [RING_GRADIENT_COLORS[0], RING_GRADIENT_COLORS[1], RING_GRADIENT_COLORS[2], '#ffffff'][i % 4]
         });
       }
     }
@@ -390,7 +397,6 @@
           currentBallNumber++;
           const nextColObj = NEON_PALETTE[Math.floor(Math.random() * NEON_PALETTE.length)];
 
-          // La següent bola comença amb la mateixa velocitat inicial
           activeBall = {
             x: SPAWN_X,
             y: SPAWN_Y,
@@ -440,7 +446,7 @@
       ctx.fillText('LOSE THE BALL', CENTER.x, 375);
       ctx.restore();
 
-      // Dibuix de l'anell
+      // Dibuix de l'anell amb GRADIENT DE COLORS ALEATORIS
       if (!hasEscaped) {
         ctx.save();
 
@@ -448,16 +454,15 @@
           CENTER.x - ARENA_RADIUS, CENTER.y - ARENA_RADIUS,
           CENTER.x + ARENA_RADIUS, CENTER.y + ARENA_RADIUS
         );
-        gradient.addColorStop(0.0, '#3b82f6');
-        gradient.addColorStop(0.4, '#8b5cf6');
-        gradient.addColorStop(0.7, '#d946ef');
-        gradient.addColorStop(1.0, '#f43f5e');
+        gradient.addColorStop(0.0, RING_GRADIENT_COLORS[0]);
+        gradient.addColorStop(0.5, RING_GRADIENT_COLORS[1]);
+        gradient.addColorStop(1.0, RING_GRADIENT_COLORS[2]);
 
         ctx.strokeStyle = gradient;
         ctx.fillStyle = gradient;
         ctx.lineWidth = 4.5;
         ctx.shadowBlur = 20;
-        ctx.shadowColor = '#d946ef';
+        ctx.shadowColor = RING_GLOW_COLOR;
 
         // 1. Cercle exterior amb l'escletxa buida
         ctx.beginPath();
