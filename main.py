@@ -162,7 +162,7 @@ def synthesize_soundtrack(
     total_samples = int((duration_sec + 1.5) * SAMPLE_RATE)
     audio_data = np.zeros(total_samples, dtype=np.float32)
 
-    # Inserció de la veu inicial
+    # Inserció de la veu inicial amb ducking
     tts_start_sample = int(0.15 * SAMPLE_RATE)
     tts_end_sample = 0
     if tts_audio is not None and len(tts_audio) > 0:
@@ -172,44 +172,39 @@ def synthesize_soundtrack(
             tts_audio[:n_tts] * 1.5
         )
 
-    # PALETA DE SONS D'ESCAPADA: Se'n tria un a l'atzar per a tot el vídeo
-    SOUND_PROFILES = [
-        {"name": "Crystal Ping", "f1": 1046.50, "f2": 2093.00, "decay": 24, "len": 0.09},
-        {"name": "Wood Pop", "f1": 820.00, "f2": 1640.00, "decay": 32, "len": 0.07},
-        {"name": "Electric Blip", "f1": 1318.51, "f2": 2637.02, "decay": 28, "len": 0.08},
-        {"name": "Marimba Pluck", "f1": 659.25, "f2": 1318.51, "decay": 26, "len": 0.09},
-        {"name": "Water Drop", "f1": 950.00, "f2": 1900.00, "decay": 30, "len": 0.08},
-        {"name": "Arcade Chime", "f1": 1174.66, "f2": 2349.32, "decay": 25, "len": 0.09},
-    ]
+    # PREPARACIÓ DEL SO D'ESCAPADA: De la carpeta assets/audio (o pop sintètic de reserva)
+    if meme_audio is not None and len(meme_audio) > 0:
+        # Tallem un fragment contundent d'un màxim de 0.28s amb fadeout perquè no enfangui el so
+        max_len = min(len(meme_audio), int(0.28 * SAMPLE_RATE))
+        escape_sound_wave = meme_audio[:max_len].copy()
+        fade_len = int(max_len * 0.3)
+        fade_curve = np.linspace(1.0, 0.0, fade_len)
+        escape_sound_wave[-fade_len:] *= fade_curve
+    else:
+        # Pop sintètic net de reserva
+        pop_len = int(0.08 * SAMPLE_RATE)
+        t = np.linspace(0, 0.08, pop_len, False)
+        escape_sound_wave = (
+            0.75 * np.sin(2 * np.pi * 950 * t)
+            + 0.25 * np.sin(2 * np.pi * 1900 * t)
+        ) * np.exp(-28 * t)
 
-    chosen_sound = random.choice(SOUND_PROFILES)
-    print(f"🔔 So d'escapada triat per a aquest vídeo: {chosen_sound['name']}")
+    n_sound_samples = len(escape_sound_wave)
 
-    f1 = chosen_sound["f1"]
-    f2 = chosen_sound["f2"]
-    decay = chosen_sound["decay"]
-    note_len = chosen_sound["len"]
-    n_note_samples = int(note_len * SAMPLE_RATE)
-
-    # Síntesi ràpida de l'ona del so escollit
-    t = np.linspace(0, note_len, n_note_samples, False)
-    single_pop_wave = (
-        0.75 * np.sin(2 * np.pi * f1 * t)
-        + 0.25 * np.sin(2 * np.pi * f2 * t)
-    ) * np.exp(-decay * t)
-
-    # Inserció a cada esdeveniment d'escapada
+    # Cada cop que una bola surt pel forat ('spawn'), sona aquest mateix so
     for ev in sound_events:
         t_sec = ev.get("time", 0)
         start_sample = int(t_sec * SAMPLE_RATE)
         if start_sample >= total_samples:
             continue
 
-        n_samples = min(n_note_samples, total_samples - start_sample)
-        audio_data[start_sample : start_sample + n_samples] += single_pop_wave[:n_samples] * 0.9
+        n_samples = min(n_sound_samples, total_samples - start_sample)
+        audio_data[start_sample : start_sample + n_samples] += (
+            escape_sound_wave[:n_samples] * 0.85
+        )
 
-    # Limitador suau (tanh) per evitar distorsió quan sonen desenes d'escapades alhora
-    audio_data = np.tanh(audio_data * 1.1)
+    # Limitador suau (tanh) per evitar distorsió digital quan sonen centenars d'escapades alhora
+    audio_data = np.tanh(audio_data * 1.05)
 
     # Normalització global al 100% de volum
     max_amp = np.max(np.abs(audio_data))
@@ -224,7 +219,7 @@ def synthesize_soundtrack(
         wf.setframerate(SAMPLE_RATE)
         wf.writeframes(audio_int16.tobytes())
 
-    print(f"🎵 Àudio sintetitzat ({len(sound_events)} escapades amb {chosen_sound['name']}, {duration_sec:.1f}s).")
+    print(f"🎵 Àudio sintetitzat ({len(sound_events)} escapades, {duration_sec:.1f}s).")
 
 
 def resolve_simulation_url():
@@ -350,11 +345,12 @@ def run():
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID and os.path.exists(final_mp4):
         print("Enviant el vídeo per Telegram...")
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVideo"
+        meme_caption = f"\n🔊 So mem: {meme_name}" if meme_name else ""
         caption_text = (
             f"💥 [MULTIPLY SWARM]\n"
             f"🎙️ Hook: \"{tts_phrase}\"\n"
             f"🔮 Boles aconseguides: {final_balls}\n"
-            f"⏱️ Durada: {actual_duration:.1f}s\n"
+            f"⏱️ Durada: {actual_duration:.1f}s{meme_caption}\n"
             f"📦 Pes: {file_size_mb:.1f} MB\n"
             f"Canal: @bouncelab.tv 🚀"
         )
