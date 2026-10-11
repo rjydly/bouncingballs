@@ -1,387 +1,467 @@
-import asyncio
-import http.server
-import json
-import os
-import random
-import socketserver
-import subprocess
-import threading
-import wave
-import edge_tts
-import numpy as np
-from playwright.sync_api import sync_playwright
-import requests
-
-# ==============================================================================
-# ⚙️ PANELL DE CONTROL PRINCIPAL
-# ==============================================================================
-SELECTED_MODE = "multiply"
-# ==============================================================================
-
-HOOK_PHRASES = [
-    "Wait until the simulator crashes!",
-    "One ball escapes, three more spawn!",
-    "Watch the circle overflow completely!",
-    "It multiplies until it breaks the system!",
-    "Can the circle contain all these balls?",
-    "Wait for the critical system overload!",
-    "Watch the balls multiply out of control!",
-    "Bet how many balls it takes to crash!",
-]
-
-PORT = 8080
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-ASSETS_AUDIO_DIR = os.path.join(BASE_DIR, "assets", "audio")
-
-
-class CustomHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, directory=BASE_DIR, **kwargs)
-
-
-def start_local_server():
-    httpd = socketserver.TCPServer(("", PORT), CustomHTTPRequestHandler)
-    thread = threading.Thread(target=httpd.serve_forever)
-    thread.daemon = True
-    thread.start()
-    print(f"Servidor web local actiu a http://localhost:{PORT} (servint des de {BASE_DIR})")
-
-
-async def _async_generate_voice(text, output_mp3):
-    communicate = edge_tts.Communicate(
-        text, voice="en-US-ChristopherNeural", rate="+10%", volume="+30%"
-    )
-    await communicate.save(output_mp3)
-
-
-def generate_tts_intro():
-    chosen_phrase = random.choice(HOOK_PHRASES)
-    print(f"🎙️ Generant veu Edge-TTS: \"{chosen_phrase}\"")
-
-    temp_mp3 = "temp_tts.mp3"
-    temp_wav = "temp_tts.wav"
-
-    asyncio.run(_async_generate_voice(chosen_phrase, temp_mp3))
-
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-y",
-            "-i",
-            temp_mp3,
-            "-ar",
-            "44100",
-            "-ac",
-            "1",
-            temp_wav,
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-
-    tts_audio = None
-    if os.path.exists(temp_wav):
-        with wave.open(temp_wav, "rb") as wf:
-            n_frames = wf.getnframes()
-            data = wf.readframes(n_frames)
-            tts_audio = (
-                np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
-            )
-
-        max_v = np.max(np.abs(tts_audio))
-        if max_v > 0:
-            tts_audio = tts_audio / max_v
-
-        os.remove(temp_wav)
-
-    if os.path.exists(temp_mp3):
-        os.remove(temp_mp3)
-
-    return tts_audio, chosen_phrase
-
-
-def load_random_meme_sound():
-    valid_exts = (".mp3", ".wav", ".ogg", ".m4a")
-    if not os.path.exists(ASSETS_AUDIO_DIR):
-        os.makedirs(ASSETS_AUDIO_DIR, exist_ok=True)
-        return None, None
-
-    audio_files = [
-        f for f in os.listdir(ASSETS_AUDIO_DIR) if f.lower().endswith(valid_exts)
-    ]
-
-    if not audio_files:
-        return None, None
-
-    chosen_filename = random.choice(audio_files)
-    chosen_path = os.path.join(ASSETS_AUDIO_DIR, chosen_filename)
-
-    temp_wav = "temp_meme.wav"
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-y",
-            "-i",
-            chosen_path,
-            "-ar",
-            "44100",
-            "-ac",
-            "1",
-            temp_wav,
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-
-    if not os.path.exists(temp_wav):
-        return None, None
-
-    with wave.open(temp_wav, "rb") as wf:
-        n_frames = wf.getnframes()
-        data = wf.readframes(n_frames)
-        meme_audio = (
-            np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
-        )
-
-    if os.path.exists(temp_wav):
-        os.remove(temp_wav)
-
-    return meme_audio, chosen_filename
-
-
-def synthesize_soundtrack(
-    sound_events,
-    duration_sec,
-    meme_audio=None,
-    tts_audio=None,
-    output_wav="audio.wav",
-):
-    SAMPLE_RATE = 44100
-    total_samples = int((duration_sec + 1.5) * SAMPLE_RATE)
-    audio_data = np.zeros(total_samples, dtype=np.float32)
-
-    # Inserció de la veu inicial amb ducking
-    tts_start_sample = int(0.15 * SAMPLE_RATE)
-    tts_end_sample = 0
-    if tts_audio is not None and len(tts_audio) > 0:
-        n_tts = min(len(tts_audio), total_samples - tts_start_sample)
-        tts_end_sample = tts_start_sample + n_tts + int(0.20 * SAMPLE_RATE)
-        audio_data[tts_start_sample : tts_start_sample + n_tts] += (
-            tts_audio[:n_tts] * 1.5
-        )
-
-    FREQUENCIES = [329.63, 392.00, 440.00, 493.88, 587.33, 659.25, 783.99]
-
-    for ev in sound_events:
-        t_sec = ev.get("time", 0)
-        ev_type = ev.get("type", "bounce")
-        note_idx = ev.get("note", 0)
-        is_reveal = ev.get("isEscape", False)
-
-        start_sample = int(t_sec * SAMPLE_RATE)
-        if start_sample >= total_samples:
-            continue
-
-        is_during_tts = tts_start_sample <= start_sample <= tts_end_sample
-        duck = 0.45 if is_during_tts else 1.0
-
-        if is_reveal and meme_audio is not None:
-            n_samples = min(len(meme_audio), total_samples - start_sample)
-            audio_data[start_sample : start_sample + n_samples] += (
-                meme_audio[:n_samples] * 1.8
-            )
-        elif is_reveal or ev_type == "glitch":
-            # SO DE SOBRECÀRREGA / GLITCH DIGITAL / CRASH
-            note_len = 2.2
-            n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
-            t = np.linspace(0, note_len, n_samples, False)
-
-            # Baixos profunds (55Hz) + soroll blanc de fallada digital + pols d'alarma
-            sub_bass = 0.7 * np.sin(2 * np.pi * 55 * t) * np.exp(-1.5 * t)
-            noise = (np.random.rand(n_samples) - 0.5) * 0.45 * np.exp(-3.0 * t)
-            alarm = 0.5 * np.sin(2 * np.pi * 880 * t * (1 + 0.5 * np.sin(2 * np.pi * 8 * t))) * np.exp(-1.8 * t)
-
-            glitch_audio = sub_bass + noise + alarm
-            audio_data[start_sample : start_sample + n_samples] += glitch_audio * 2.2
-        elif ev_type == "spawn":
-            # So de multiplicació / spawn de noves boles (+3)
-            note_len = 0.12
-            n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
-            t = np.linspace(0, note_len, n_samples, False)
-            spawn_tone = (
-                0.6 * np.sin(2 * np.pi * 987.77 * t)  # B5
-                + 0.4 * np.sin(2 * np.pi * 1318.51 * t) # E6
-            ) * np.exp(-22 * t)
-            audio_data[start_sample : start_sample + n_samples] += spawn_tone * 1.6
-        else:
-            # Rebot harmònic curt
-            freq = FREQUENCIES[note_idx % len(FREQUENCIES)]
-            note_len = 0.06
-            n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
-            t = np.linspace(0, note_len, n_samples, False)
-            pop = np.sin(2 * np.pi * freq * t) * np.exp(-36 * t)
-            audio_data[start_sample : start_sample + n_samples] += pop * 0.8 * duck
-
-    # Normalització global al màxim de volum
-    max_amp = np.max(np.abs(audio_data))
-    if max_amp > 0:
-        audio_int16 = (audio_data / max_amp * 31800).astype(np.int16)
-    else:
-        audio_int16 = (audio_data * 31800).astype(np.int16)
-
-    with wave.open(output_wav, "w") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(SAMPLE_RATE)
-        wf.writeframes(audio_int16.tobytes())
-
-    print(f"🎵 Àudio sintetitzat correctament amb efecte de col·lapse digital ({duration_sec:.1f}s).")
-
-
-def resolve_simulation_url():
-    possible_candidates = [
-        f"{SELECTED_MODE}.html",
-        os.path.join("simulators", f"{SELECTED_MODE}.html"),
-        "spikes.html",
-        os.path.join("simulators", "spikes.html"),
-    ]
-
-    for rel_path in possible_candidates:
-        full_path = os.path.join(BASE_DIR, rel_path)
-        if os.path.exists(full_path):
-            web_path = rel_path.replace("\\", "/")
-            print(f"📄 Fitxer HTML trobat: {web_path}")
-            return f"http://localhost:{PORT}/{web_path}"
-
-    all_files = os.listdir(BASE_DIR)
-    raise FileNotFoundError(
-        f"❌ No s'ha trobat {SELECTED_MODE}.html a {BASE_DIR}. Fitxers: {all_files}"
-    )
-
-
-def run():
-    start_local_server()
-    meme_audio, meme_name = load_random_meme_sound()
-    tts_audio, tts_phrase = generate_tts_intro()
-
-    sim_url = resolve_simulation_url()
-
-    with sync_playwright() as p:
-        print("Iniciant Firefox en mode headless...")
-        browser = p.firefox.launch(headless=True)
-
-        context = browser.new_context(
-            viewport={"width": 1080, "height": 1920},
-            accept_downloads=True,
-        )
-
-        page = context.new_page()
-
-        cache_buster = random.randint(100000, 999999)
-        final_sim_url = f"{sim_url}?cb={cache_buster}"
-
-        print(f"Carregant simulador ({final_sim_url})...")
-        response = page.goto(final_sim_url, wait_until="load")
-        if response and response.status >= 400:
-            raise RuntimeError(f"Error HTTP {response.status} en carregar {final_sim_url}!")
-
-        page.wait_for_timeout(1000)
-
-        is_ready = page.evaluate("typeof window.startRecording === 'function'")
-        if not is_ready:
-            raise RuntimeError("window.startRecording no està definida al fitxer HTML!")
-
-        raw_video = "raw_simulation.webm"
-
-        with page.expect_download(timeout=120000) as download_info:
-            print("Enregistrant mode Multiply Overload...")
-            page.evaluate("window.startRecording()")
-
-        sound_events = page.evaluate("window.soundEvents || []")
-        actual_duration = page.evaluate("window.actualDuration || 28.0")
-        final_balls = page.evaluate("window.finalBalls || 220")
-
-        download = download_info.value
-        download.save_as(raw_video)
-        print(f"Repte completat! Sobrecàrrega amb {final_balls} boles ({actual_duration:.1f}s).")
-        browser.close()
-
-    audio_file = "simulation_audio.wav"
-    synthesize_soundtrack(
-        sound_events, actual_duration, meme_audio, tts_audio, audio_file
-    )
-
-    final_mp4 = "bouncelab_video.mp4"
-    print("Empaquetant MP4 a 30 FPS...")
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-y",
-            "-i",
-            raw_video,
-            "-i",
-            audio_file,
-            "-c:v",
-            "libx264",
-            "-preset",
-            "fast",
-            "-r",
-            "30",
-            "-vsync",
-            "cfr",
-            "-pix_fmt",
-            "yuv420p",
-            "-crf",
-            "26",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "128k",
-            "-shortest",
-            final_mp4,
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-
-    file_size_mb = os.path.getsize(final_mp4) / (1024 * 1024)
-    print(f"📦 Mida final del vídeo: {file_size_mb:.2f} MB")
-
-    for tmp in [raw_video, audio_file]:
-        if os.path.exists(tmp):
-            os.remove(tmp)
-
-    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID and os.path.exists(final_mp4):
-        print("Enviant el vídeo per Telegram...")
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVideo"
-        caption_text = (
-            f"💥 [MULTIPLY OVERLOAD]\n"
-            f"🎙️ Hook: \"{tts_phrase}\"\n"
-            f"🔮 Boles al col·lapse: {final_balls}\n"
-            f"⚠️ Estat: SYSTEM OVERLOAD!\n"
-            f"⏱️ Durada: {actual_duration:.1f}s\n"
-            f"📦 Pes: {file_size_mb:.1f} MB\n"
-            f"Canal: @bouncelab.tv 🚀"
-        )
-
-        with open(final_mp4, "rb") as f:
-            res = requests.post(
-                url,
-                data={
-                    "chat_id": TELEGRAM_CHAT_ID,
-                    "caption": caption_text,
-                    "supports_streaming": True,
-                },
-                files={"video": f},
-                timeout=240,
-            )
-            if res.status_code == 200:
-                print("🎉 VÍDEO ENVIAT AMB ÈXIT A TELEGRAM!")
-            else:
-                print(f"Error Telegram: {res.text}")
-
-
-if __name__ == "__main__":
-    run()
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>BounceLab - Multiply Overload Mode</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Lexend:wght@700;800;900&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background-color: #030712;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      overflow: hidden;
+      font-family: 'Lexend', sans-serif;
+    }
+    canvas {
+      width: auto;
+      height: 100vh;
+      aspect-ratio: 9 / 16;
+      box-shadow: 0 0 50px rgba(0, 0, 0, 0.95);
+    }
+    .font-preload {
+      position: absolute;
+      left: -9999px;
+      visibility: hidden;
+      pointer-events: none;
+    }
+    .w700 { font-family: 'Lexend', sans-serif; font-weight: 700; }
+    .w800 { font-family: 'Lexend', sans-serif; font-weight: 800; }
+    .w900 { font-family: 'Lexend', sans-serif; font-weight: 900; }
+  </style>
+</head>
+<body>
+  <div class="font-preload w700">Preload Lexend 700</div>
+  <div class="font-preload w800">Preload Lexend 800</div>
+  <div class="font-preload w900">Preload Lexend 900</div>
+
+  <canvas id="canvas" width="1080" height="1920"></canvas>
+
+  <script>
+    // ============================================================
+    // 0. DEFINICIÓ INICIAL DE WINDOW PER EVITAR ERRORS DE PLAYWRIGHT
+    // ============================================================
+    window.soundEvents = [];
+    window.actualDuration = 0;
+    window.finalBalls = 1;
+
+    let mediaRecorder = null;
+    let recordedChunks = [];
+    let startTime = null;
+    let isRunning = false;
+    let isFinished = false;
+    let isGlitching = false;
+    let glitchStartTime = null;
+
+    // Definim startRecording a dalt de tot de l'script immediatament
+    window.startRecording = function() {
+      console.log("Iniciant enregistrament de pantalla a 30 FPS...");
+      startTime = performance.now();
+      isRunning = true;
+      window.soundEvents = [];
+      recordedChunks = [];
+
+      const stream = canvas.captureStream(30);
+
+      let mimeType = 'video/webm;codecs=vp8';
+      if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
+        mimeType = 'video/webm;codecs=vp9';
+      } else if (MediaRecorder.isTypeSupported('video/webm')) {
+        mimeType = 'video/webm';
+      }
+
+      mediaRecorder = new MediaRecorder(stream, {
+        mimeType: mimeType,
+        videoBitsPerSecond: 4500000
+      });
+
+      mediaRecorder.ondataavailable = e => {
+        if (e.data.size > 0) recordedChunks.push(e.data);
+      };
+
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(recordedChunks, { type: 'video/webm' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        a.download = 'simulation.webm';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      };
+
+      mediaRecorder.start();
+
+      setTimeout(() => {
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+          window.actualDuration = (performance.now() - startTime) / 1000;
+          window.finalBalls = balls.length;
+          mediaRecorder.stop();
+        }
+      }, 35000);
+    };
+
+    // ============================================================
+    // 1. CONFIGURACIÓ GLOBAL I CONSTANTS FÍSIQUES
+    // ============================================================
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const WIDTH = 1080, HEIGHT = 1920;
+    const CENTER = { x: WIDTH / 2, y: HEIGHT / 2 };
+
+    const ARENA_RADIUS = 390;         // Un sol cercle
+    const BALL_RADIUS = 14;           // Mida compacta per permetre centenars de boles
+    const BALL_SPEED = 620;
+    const GRAVITY = 750;
+    const BOUNCE_RESTITUTION = 1.012;
+    const MAX_SPEED = 920;
+
+    const GAP_SIZE = 0.46;            // Mida de l'escletxa giratòria
+    const OVERLOAD_THRESHOLD = 220;   // Límit de boles per activar el col·lapse
+
+    const NEON_PALETTE = [
+      { color: '#00f2fe', glow: '#00f2fe' },
+      { color: '#ff007f', glow: '#ff007f' },
+      { color: '#39ff14', glow: '#39ff14' },
+      { color: '#ffd700', glow: '#ffd700' },
+      { color: '#b026ff', glow: '#b026ff' },
+      { color: '#ff6600', glow: '#ff6600' },
+      { color: '#ff2a2a', glow: '#ff2a2a' },
+      { color: '#00ff88', glow: '#00ff88' }
+    ];
+
+    function recordSound(type, note = 0) {
+      if (startTime !== null) {
+        const timeSec = (performance.now() - startTime) / 1000;
+        window.soundEvents.push({
+          time: timeSec,
+          type: type, // 'bounce', 'spawn', 'glitch'
+          note: note,
+          isEscape: type === 'glitch'
+        });
+      }
+    }
+
+    function isInGap(angle, gAngle) {
+      let diff = Math.abs(angle - gAngle) % (Math.PI * 2);
+      if (diff > Math.PI) diff = Math.PI * 2 - diff;
+      return diff <= GAP_SIZE / 2;
+    }
+
+    // ============================================================
+    // 2. ESTAT DEL JOC
+    // ============================================================
+    let ring = {
+      radius: ARENA_RADIUS,
+      gapAngle: Math.random() * Math.PI * 2,
+      rotSpeed: 0.58,
+      color: '#00f2fe',
+      glow: '#00f2fe'
+    };
+
+    // Comença amb 1 sola bola
+    let balls = [{
+      x: CENTER.x,
+      y: CENTER.y - 60,
+      vx: (Math.random() - 0.5) * BALL_SPEED,
+      vy: Math.random() * BALL_SPEED,
+      color: '#00f2fe',
+      glow: '#00f2fe',
+      alive: true
+    }];
+
+    let escapedBalls = [];
+
+    function spawnTriplet() {
+      // Cada cop que 1 bola surt, n'apareixen 3 de noves
+      for (let i = 0; i < 3; i++) {
+        const col = NEON_PALETTE[Math.floor(Math.random() * NEON_PALETTE.length)];
+        const ang = Math.random() * Math.PI * 2;
+        const spd = BALL_SPEED * (0.85 + Math.random() * 0.3);
+        balls.push({
+          x: CENTER.x + (Math.random() - 0.5) * 40,
+          y: CENTER.y + (Math.random() - 0.5) * 40,
+          vx: Math.cos(ang) * spd,
+          vy: Math.sin(ang) * spd,
+          color: col.color,
+          glow: col.glow,
+          alive: true
+        });
+      }
+      recordSound('spawn', 1);
+    }
+
+    // ============================================================
+    // 3. FÍSICA EN TEMPS REAL
+    // ============================================================
+    function stepPhysics(fixedDt) {
+      if (!isRunning || isFinished) return;
+
+      ring.gapAngle = (ring.gapAngle + ring.rotSpeed * fixedDt) % (Math.PI * 2);
+
+      // Comprovar si s'arriba a la sobrecàrrega
+      if (balls.length >= OVERLOAD_THRESHOLD && !isGlitching) {
+        isGlitching = true;
+        glitchStartTime = performance.now();
+        recordSound('glitch', 99);
+
+        setTimeout(() => {
+          if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+            window.actualDuration = (performance.now() - startTime) / 1000;
+            window.finalBalls = balls.length;
+            isFinished = true;
+            mediaRecorder.stop();
+          }
+        }, 2500);
+      }
+
+      // Moure boles vives
+      for (let i = balls.length - 1; i >= 0; i--) {
+        const b = balls[i];
+        b.vy += GRAVITY * fixedDt;
+        b.x += b.vx * fixedDt;
+        b.y += b.vy * fixedDt;
+
+        const curSpd = Math.hypot(b.vx, b.vy);
+        if (curSpd > MAX_SPEED) {
+          b.vx = (b.vx / curSpd) * MAX_SPEED;
+          b.vy = (b.vy / curSpd) * MAX_SPEED;
+        }
+
+        const dx = b.x - CENTER.x;
+        const dy = b.y - CENTER.y;
+        const dist = Math.hypot(dx, dy);
+
+        let hitAng = Math.atan2(dy, dx);
+        if (hitAng < 0) hitAng += Math.PI * 2;
+
+        // Comprovació del forat: 1 surt -> 3 entren
+        if (dist >= ARENA_RADIUS - BALL_RADIUS) {
+          if (isInGap(hitAng, ring.gapAngle)) {
+            if (dist >= ARENA_RADIUS) {
+              balls.splice(i, 1);
+              escapedBalls.push({
+                x: b.x,
+                y: b.y,
+                vx: b.vx * 1.2,
+                vy: b.vy * 1.2,
+                color: b.color,
+                life: 45
+              });
+
+              spawnTriplet();
+              continue;
+            }
+          } else {
+            // Rebot net
+            const nx = dx / (dist || 1);
+            const ny = dy / (dist || 1);
+            const dot = b.vx * nx + b.vy * ny;
+            if (dot > 0) {
+              b.vx = (b.vx - 2 * dot * nx) * BOUNCE_RESTITUTION;
+              b.vy = (b.vy - 2 * dot * ny) * BOUNCE_RESTITUTION;
+              b.x = CENTER.x + nx * (ARENA_RADIUS - BALL_RADIUS);
+              b.y = CENTER.y + ny * (ARENA_RADIUS - BALL_RADIUS);
+
+              if (Math.random() < Math.max(0.08, 1 / Math.sqrt(balls.length))) {
+                recordSound('bounce', (balls.length % 7));
+              }
+            }
+          }
+        }
+      }
+
+      // Xocs elàstics entre boles
+      const count = Math.min(balls.length, 120);
+      const minDist = BALL_RADIUS * 2;
+      const minDistSq = minDist * minDist;
+
+      for (let i = 0; i < count; i++) {
+        for (let j = i + 1; j < count; j++) {
+          const b1 = balls[i], b2 = balls[j];
+          const cdx = b2.x - b1.x;
+          const cdy = b2.y - b1.y;
+
+          if (Math.abs(cdx) < minDist && Math.abs(cdy) < minDist) {
+            const distSq = cdx * cdx + cdy * cdy;
+            if (distSq < minDistSq && distSq > 0.001) {
+              const cdist = Math.sqrt(distSq);
+              const cnx = cdx / cdist;
+              const cny = cdy / cdist;
+              const overlap = (minDist - cdist) * 0.5;
+
+              b1.x -= cnx * overlap;
+              b1.y -= cny * overlap;
+              b2.x += cnx * overlap;
+              b2.y += cny * overlap;
+
+              const rvx = b1.vx - b2.vx;
+              const rvy = b1.vy - b2.vy;
+              const vNorm = rvx * cnx + rvy * cny;
+              if (vNorm > 0) {
+                b1.vx -= vNorm * cnx;
+                b1.vy -= vNorm * cny;
+                b2.vx += vNorm * cnx;
+                b2.vy += vNorm * cny;
+              }
+            }
+          }
+        }
+      }
+
+      // Moure boles que han escapat
+      escapedBalls.forEach(eb => {
+        eb.x += eb.vx * fixedDt;
+        eb.y += eb.vy * fixedDt;
+        eb.life--;
+      });
+      escapedBalls = escapedBalls.filter(eb => eb.life > 0);
+    }
+
+    // ============================================================
+    // 4. RENDERITZAT VISUAL AMB EFECTE GLITCH
+    // ============================================================
+    let lastTime = null;
+    let physicsAccumulator = 0;
+    const FIXED_PHYSICS_STEP = 1 / 60;
+
+    function render(currentTime) {
+      if (!startTime) startTime = currentTime;
+      if (!lastTime) lastTime = currentTime;
+      const frameDelta = Math.min((currentTime - lastTime) / 1000, 0.1);
+      lastTime = currentTime;
+
+      physicsAccumulator += frameDelta;
+      while (physicsAccumulator >= FIXED_PHYSICS_STEP) {
+        stepPhysics(FIXED_PHYSICS_STEP);
+        physicsAccumulator -= FIXED_PHYSICS_STEP;
+      }
+
+      ctx.save();
+
+      // Efecte Glitch: tremolor violent
+      if (isGlitching) {
+        const shakeIntensity = Math.min(32, 10 + (performance.now() - glitchStartTime) * 0.015);
+        const shakeX = (Math.random() - 0.5) * shakeIntensity;
+        const shakeY = (Math.random() - 0.5) * shakeIntensity;
+        ctx.translate(shakeX, shakeY);
+      }
+
+      ctx.fillStyle = isGlitching && Math.random() < 0.15 ? '#111827' : '#030712';
+      ctx.fillRect(-50, -50, WIDTH + 100, HEIGHT + 100);
+
+      // Títol superior
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.font = '800 52px Lexend, sans-serif';
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText('MULTIPLY CHALLENGE', CENTER.x, 260);
+
+      ctx.font = '700 28px Lexend, sans-serif';
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.65)';
+      ctx.fillText('1 ESCAPES  →  3 SPAWN (+3)', CENTER.x, 310);
+      ctx.restore();
+
+      // Dibuix de l'únic cercle
+      ctx.save();
+      const ringGlow = isGlitching ? '#ff0055' : ring.glow;
+      const ringCol = isGlitching ? (Math.random() < 0.5 ? '#ff0055' : '#ffffff') : ring.color;
+
+      ctx.shadowBlur = 24;
+      ctx.shadowColor = ringGlow;
+      ctx.strokeStyle = ringCol;
+      ctx.lineWidth = 7;
+      ctx.lineCap = 'round';
+
+      ctx.beginPath();
+      const startGap = ring.gapAngle + GAP_SIZE / 2;
+      const endGap = ring.gapAngle - GAP_SIZE / 2 + Math.PI * 2;
+      ctx.arc(CENTER.x, CENTER.y, ARENA_RADIUS, startGap, endGap);
+      ctx.stroke();
+      ctx.restore();
+
+      // Boles escapades cap a fora
+      escapedBalls.forEach(eb => {
+        const alpha = eb.life / 45;
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = eb.color;
+        ctx.beginPath();
+        ctx.arc(eb.x, eb.y, BALL_RADIUS * 0.9, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      });
+
+      // Boles vives
+      balls.forEach(b => {
+        ctx.save();
+        if (balls.length < 80) {
+          ctx.shadowBlur = 14;
+          ctx.shadowColor = b.glow;
+        }
+        ctx.fillStyle = b.color;
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, BALL_RADIUS, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      });
+
+      // Marcador de boles
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.font = '900 58px Lexend, sans-serif';
+      ctx.fillStyle = balls.length > 100 ? (Math.random() < 0.3 ? '#ef4444' : '#ffffff') : '#ffffff';
+      ctx.fillText(`BALLS: ${balls.length}`, CENTER.x, 385);
+      ctx.restore();
+
+      // Avís de sobrecàrrega final
+      if (isGlitching) {
+        ctx.save();
+        ctx.textAlign = 'center';
+
+        for (let l = 0; l < 8; l++) {
+          const gy = Math.random() * HEIGHT;
+          ctx.fillStyle = Math.random() < 0.5 ? 'rgba(0, 242, 254, 0.25)' : 'rgba(255, 0, 85, 0.25)';
+          ctx.fillRect(0, gy, WIDTH, 10 + Math.random() * 20);
+        }
+
+        ctx.font = '900 68px Lexend, sans-serif';
+        ctx.fillStyle = Math.random() < 0.5 ? '#ff0055' : '#ffffff';
+        ctx.shadowBlur = 30;
+        ctx.shadowColor = '#ff0055';
+        ctx.fillText('⚠️ SYSTEM OVERLOAD! ⚠️', CENTER.x, CENTER.y - 30);
+
+        ctx.font = '800 42px Lexend, sans-serif';
+        ctx.fillStyle = '#00f2fe';
+        ctx.fillText(`TOO MANY BALLS (${balls.length})`, CENTER.x, CENTER.y + 45);
+
+        ctx.font = '700 32px Lexend, sans-serif';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText('SIMULATION CRASHED', CENTER.x, CENTER.y + 105);
+        ctx.restore();
+      }
+
+      // Marca d'aigua inferior
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.font = '700 28px Lexend, sans-serif';
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
+      ctx.fillText('@bouncelab.tv', CENTER.x, HEIGHT - 220);
+      ctx.restore();
+
+      ctx.restore(); // Final del shake
+
+      requestAnimationFrame(render);
+    }
+
+    document.fonts.ready.then(() => {
+      requestAnimationFrame(render);
+    });
+  </script>
+</body>
+</html>
