@@ -1,0 +1,188 @@
+================================================================================
+                    BOUNCELAB.TV - DOCUMENTACIÓ TÈCNICA GLOBAL
+         Factoria Automatitzada de Vídeos Virals de Física de Boles 2D
+================================================================================
+
+1. DESCRIPCIÓ GENERAL DEL PROJECTE
+--------------------------------------------------------------------------------
+BounceLab és un sistema 100% autònom dissenyat per generar, sonoritzar, empaquetar
+i distribuir diàriament vídeos curts en format vertical (9:16 - 1080x1920) optimitzats 
+per a l'algorisme de retenció de TikTok, Instagram Reels i YouTube Shorts.
+
+El projecte combina:
+- Motors de simulació de física 2D en HTML5 Canvas (JavaScript natiu).
+- Orquestració i gravació en segon pla mitjançant Python i Playwright (Firefox headless).
+- Generació de veu en off amb IA neuronal (Edge-TTS) amb frases ganxo adaptades.
+- Disseny sonor procedural i barreja d'àudio avançada amb NumPy i FFmpeg.
+- Enviament automàtic a Telegram a través de la seva Bot API.
+- Execució diària desatesa i gratuïta mitjançant GitHub Actions.
+
+
+2. ESTRUCTURA DE FITXERS DEL REPOSITORI
+--------------------------------------------------------------------------------
+bouncingballs/
+├── .github/
+│   └── workflows/
+│       └── daily_video.yml       # Automatització cron de GitHub Actions
+├── assets/
+│   └── audio/                    # Carpeta amb fitxers de so (.mp3, .wav, .m4a)
+├── simulators/                   # Simuladors físics en HTML/Canvas
+│   ├── multiply.html             # Mode 1: Multiplicació massiva fins a 2.000 boles
+│   ├── spikes.html               # Mode 2: Touch the spike, lose the ball (punxes)
+│   ├── accumulation.html         # Mode 3: Boles que es congelen cada X segons
+│   ├── tracker.html              # Mode 4: Don't lose the red ball (repte visual)
+│   ├── classic.html              # Mode 5: Anells concèntrics clàssics
+│   └── battle.html               # Mode 6: Battle Royale amb tall de cordes
+├── main.py                       # Orquestrador central, servidor i sintetitzador
+└── requirements.txt              # Dependències de Python
+
+
+3. DESGLOSSAMENT DETALLAT DELS 6 MODES DE JOC
+--------------------------------------------------------------------------------
+
+[MODE 1: MULTIPLY SWARM (simulators/multiply.html)]
+- Concepte: Un sol cercle de neó amb una escletxa giratòria. Comença amb 1 sola bola. 
+  Cada vegada que una bola surt per l'escletxa, s'escapa i n'apareixen 3 de noves 
+  al centre (creixement exponencial).
+- Objectiu final: El vídeo s'atura de forma neta en assolir 1.800 - 2.000 boles 
+  rebotant a l'interior (omplint el 95% del cercle com un fluid de neó).
+- Algorisme de llançament inicial: Simula 1.080 angles en mil·lisegons abans de 
+  començar per garantir que la primera bola fa només 1 o 2 rebots i surt en menys 
+  d'1,4 segons, arrencant la multiplicació immediatament.
+- Rendiment: Renderitzat per lots de color (batch rendering amb ctx.arc) per 
+  mantenir 60 FPS constants amb 2.000 boles simultànies.
+- Sons: S'utilitza exclusivament un so seleccionat a l'atzar de la carpeta assets/audio/. 
+  Sona cada cop que una bola surt pel forat, creant un efecte de metralladora ASMR. 
+  No hi ha sons de rebots ni acords estranys al final.
+
+[MODE 2: TOUCH THE SPIKE, LOSE THE BALL (simulators/spikes.html)]
+- Concepte: Un anell amb gradient neó cobert de punxes triangulars cap a l'interior 
+  (SPIKE_HEIGHT = 48px) amb una escletxa fixa o en angle aleatori a la meitat inferior.
+- Física: Gravetat contundent (1.450 px/s²). Totes les boles surten exactament 
+  del mateix punt amb el mateix vector de velocitat inicial (efecte dòmino).
+- Mecànica de sacrifici: Quan una bola frega la punta d'una punxa, mor a l'instant, 
+  explota en partícules i deixa una rodona grisa sòlida com a escut. Les boles 
+  següents reboten contra les boles grises sense morir, protegint el camí pas a pas.
+- Escletxa 100% neta: No hi ha cap paret invisible ni bloqueig al forat.
+- Pre-simulació: El cercador matemàtic filtra en memòria una partida que duri 
+  entre 25s i 60s amb un mínim de 4 sacrificis abans d'escapar. Al final, l'anell 
+  s'esfondra en una explosió total de confeti (Ring Shatter).
+
+[MODE 3: ACCUMULATION (simulators/accumulation.html)]
+- Concepte: Una bola rebota amb gravetat dins d'un anell giratori amb un forat. 
+  Té un temps límit per escapar. Si s'esgota el temps, es congela al lloc exacte 
+  on queda com una rodona grisa sòlida.
+- Cronòmetre aleatori fix per vídeo: A cada vídeo nou es tria un temps únic 
+  aleatori d'entre 1,5s i 3,5s (ex: 2,4s). Totes les boles d'aquella partida 
+  es congelen després d'aquest temps exacte.
+- Colors: L'anell i les boles trien colors neó independents.
+- Pre-càlcul: Troba partides garantides d'entre 18s i 80s amb un mínim de 4-5 boles 
+  congelades abans de la victòria.
+
+[MODE 4: DON'T LOSE THE RED BALL (simulators/tracker.html)]
+- Concepte: Repte d'atenció visual viral basat en el "Shell Game".
+- Fase 1 (0-3s): 15 posicions circulars interiors (radi 275), 14 boles blaves 
+  i 1 bola vermella. Fletxa assenyalant la bola vermella des de dins cap enfora 
+  i compte enrere 3.. 2.. 1.. al centre. Números 1..15 entre les boles i l'anell blanc. 
+  Text inferior fix "FOLLOW THE RED BALL".
+- Fase 2 (3-18s): Shuffling caòtic de 15 segons. Totes les boles es tornen vermelles. 
+  Comptador gran al fons de 15 a 1. Acceleració suau durant els primers 3 segons 
+  (160 a 600 px/s) perquè l'ull pugui fixar la bola.
+- Fase 3 (18-19.8s): Les boles tornen suaument mitjançant interpolació cúbica als 
+  15 slots interiors i els números apareixen en sentit horari amb clics rítmics.
+- Fase 4 (19.8-21.6s): Totes les boles es tornen blaves excepte la bola original, 
+  que es manté vermella amb una fletxa indicant el número guanyador.
+
+[MODE 5: CLASSIC (simulators/classic.html)]
+- Concepte: Entre 4 i 7 anells concèntrics giratoris de neó amb escletxes.
+- Dues boles de colors rivals reboten alhora amb gravetat competint per veure 
+  quina travessa tots els anells i s'escapa primer.
+- Efectes de trencament (burst/shatter) a cada mur trencat.
+
+[MODE 6: STRING BATTLE ROYALE (simulators/battle.html)]
+- Concepte: Entre 4 i 5 boles connectades a l'arena mitjançant desenes de cordes.
+- Quan el cos d'una bola toca la corda d'una rival, la talla físicament.
+- La bola que es queda a 0 cordes mor amb so de mem. L'última viva guanya.
+
+
+4. SISTEMA VISUAL I ESTILÍSTICA
+--------------------------------------------------------------------------------
+- Resolució: 1080 x 1920 (relació d'aspecte vertical 9:16 estàndard per a mòbils).
+- Tipografia oficial: Google Fonts "Lexend" (pesos 700, 800 i 900).
+  Precarregada mitjançant elements DOM ocults (.font-preload) i comprovada amb 
+  document.fonts.ready abans del renderitzat per evitar fallades a Playwright.
+- Paleta Neó: Cyan (#00f2fe), Pink (#ff007f), Lime (#39ff14), Gold (#ffd700),
+  Purple (#b026ff), Orange (#ff6600), Red (#ff2a2a), Blue (#1e90ff), Emerald (#00ff88).
+- Marca d'aigua unificada: "@bouncelab.tv" a la part inferior de tots els modes.
+
+
+5. DISSENY D'ÀUDIO I SÍNTESI PROCEDURAL (main.py)
+--------------------------------------------------------------------------------
+El motor d'àudio està sintetitzat digitalment amb NumPy a 44.100 Hz (mono float32)
+i convertit a PCM int16 de 16 bits sense necessitat de DAW extern:
+
+- Veu en off neuronal (Edge-TTS):
+  - Model: en-US-ChristopherNeural (veu masculina enèrgica en anglès).
+  - Volum: +30% a +35%, velocitat: +10%.
+  - Comença exactament al segon 0.15 del vídeo.
+  - S'aplica "Audio Ducking": la música i els efectes s'atenuen un 55% mentre 
+    la veu està parlant per garantir la intel·ligibilitat del text.
+- Diccionari de Hooks adaptats (MODE_HOOKS):
+  Cada mode té la seva pròpia llista de preguntes i crides a l'acció per captar 
+  l'atenció en els primers 2 segons del vídeo.
+- Processament per mode:
+  - multiply: Sona exclusivament l'àudio de mem carregat d'assets/audio/ retallat 
+    àgilment a cada bola que surt, amb limitador suau tanh.
+  - spikes: Espetecs contundents de greus a les morts (burst) i notes d'impacte.
+  - accumulation: Sons de congelació cristal·lina (noise + ones agudes) i rebots.
+  - tracker: Tics de metrònom de compte enrere i pops d'aparició de números.
+  - classic / battle: Escala pentatònica harmònica afinada.
+
+
+6. RENDERITZAT I COMPRESSIÓ DE VÍDEO (FFmpeg)
+--------------------------------------------------------------------------------
+- Captura de Canvas: Es realitza des del navegador headless mitjançant l'API nativa 
+  HTML5 MediaRecorder (capturant a 30 FPS directament a format WebM).
+- Multiplexat final: FFmpeg fusiona la pista de vídeo crua i l'àudio sintetitzat.
+- Còdec de vídeo: H.264 (libx264) a 30 FPS constants (-vsync cfr).
+- Format de píxels: yuv420p (compatibilitat universal mòbil, TikTok i Instagram).
+- Taxa de compressió: CRF 26 amb preset "fast".
+- Còdec d'àudio: AAC a 128 kbps.
+- Pes final del fitxer: Entre 5 MB i 20 MB (molt per sota del límit de 50 MB de Telegram).
+
+
+7. AUTOMATITZACIÓ I DISTRIBUCIÓ
+--------------------------------------------------------------------------------
+- Servidor local: main.py aixeca un servidor HTTP multithread al port 8080 servint 
+  des del directori arrel del projecte, prioritzant la carpeta simulators/.
+- Anticatxé: Cada execució genera un paràmetre aleatori (?cb=123456) per impedir 
+  que Playwright reutilitzi fitxers temporals.
+- Telegram Bot API:
+  - Endpoint: https://api.telegram.org/bot<TOKEN>/sendVideo
+  - Paràmetres: supports_streaming=True, timeout de pujada de 240s.
+  - Captions dinàmics: Mostren el títol del mode, el hook de veu utilitzat, 
+    les estadístiques de la partida (sacrificis, boles aconseguides, etc.), 
+    la durada exacta en segons i el pes del fitxer.
+- GitHub Actions (.github/workflows/daily_video.yml):
+  - Màquina virtual Ubuntu Latest.
+  - Instal·lació de dependències de Python, FFmpeg i navegador Firefox per a Playwright.
+  - Secrets necessaris: TELEGRAM_BOT_TOKEN i TELEGRAM_CHAT_ID.
+
+
+8. COM CANVIAR DE MODE I EXECUTAR EL PROJECTE
+--------------------------------------------------------------------------------
+Per canviar el tipus de vídeo que es genera, només cal modificar una sola línia 
+a dalt de tot de main.py:
+
+    SELECTED_MODE = "multiply"      # Opcions: "multiply", "spikes", "accumulation", 
+                                    #          "tracker", "classic", "battle"
+
+Per executar-lo manualment a la teva màquina:
+1. Assegura't de tenir instal·lat FFmpeg al sistema.
+2. Instal·la les dependències: pip install -r requirements.txt
+3. Instal·la Firefox per a Playwright: playwright install --with-deps firefox
+4. Defineix les variables d'entorn (opcional si vols enviar per Telegram):
+   export TELEGRAM_BOT_TOKEN="el_teu_token"
+   export TELEGRAM_CHAT_ID="el_teu_chat_id"
+5. Executa: python main.py
+================================================================================
