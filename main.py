@@ -77,7 +77,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 VIDEOS_DIR = os.path.join(BASE_DIR, "videos")
 ASSETS_AUDIO_DIR = os.path.join(BASE_DIR, "assets", "audio")
 
-# Secrets
+# Secrets d'entorn
 GITHUB_REPO = os.environ.get("GITHUB_REPO")
 ZERNIO_API_KEY = os.environ.get("ZERNIO_API_KEY")
 ZERNIO_IG_ID = os.environ.get("ZERNIO_INSTAGRAM_ACCOUNT_ID")
@@ -104,7 +104,7 @@ def get_current_slot_and_mode():
     else:
         slot = 2  # 23:00 UTC (7 PM EDT)
 
-    # Dies des d'una data base
+    # Dies des de data base
     day_number = (now_utc.date() - date(2026, 1, 1)).days
     mode_index = (day_number * 3 + slot) % len(ALLOWED_MODES)
 
@@ -114,12 +114,7 @@ def get_current_slot_and_mode():
     else:
         active_mode = ALLOWED_MODES[mode_index]
 
-    # Snapchat cada 1,5 dies:
-    # En un cicle de 3 dies (9 slots totals):
-    # - Dia 0, Slot 0 -> SNAPCHAT SI
-    # - Dia 1, Slot 2 -> SNAPCHAT SI (33 hores més tard)
-    # - Dia 2, cap torn -> (el següent és Dia 0 Slot 0, 39 hores més tard)
-    # Mitjana = 36 hores (1,5 dies) = 20 vídeos exactes cada 30 dies!
+    # Snapchat cada 1,5 dies (cicle de 3 dies = 2 publicacions cada 3 dies = 20 al mes)
     cycle_day = day_number % 3
     should_snapchat = FORCE_SNAPCHAT or (
         (cycle_day == 0 and slot == 0) or (cycle_day == 1 and slot == 2)
@@ -578,8 +573,10 @@ def publish_to_snapchat(video_path, captions):
 
     upload_id = None
     try:
+        filename = os.path.basename(video_path)
         with open(video_path, "rb") as f:
-            files = {"file": f}
+            # Força el tipus MIME exacte a video/mp4 per evitar errors 400
+            files = {"file": (filename, f, "video/mp4")}
             data = {"teamId": BUNDLE_TEAM_ID}
             up_res = requests.post(upload_url, headers=headers_upload, files=files, data=data, timeout=120)
             if up_res.status_code in [200, 201]:
