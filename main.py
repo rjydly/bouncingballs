@@ -162,7 +162,7 @@ def synthesize_soundtrack(
     total_samples = int((duration_sec + 1.5) * SAMPLE_RATE)
     audio_data = np.zeros(total_samples, dtype=np.float32)
 
-    # Inserció equilibrada de la veu inicial
+    # Inserció de la veu inicial amb ducking
     tts_start_sample = int(0.15 * SAMPLE_RATE)
     tts_end_sample = 0
     if tts_audio is not None and len(tts_audio) > 0:
@@ -172,7 +172,6 @@ def synthesize_soundtrack(
             tts_audio[:n_tts] * 1.5
         )
 
-    # Escala pentatònica brillant per als rebots
     FREQUENCIES = [329.63, 392.00, 440.00, 493.88, 587.33, 659.25, 783.99]
 
     for ev in sound_events:
@@ -206,7 +205,7 @@ def synthesize_soundtrack(
             ) * np.exp(-3.0 * t)
             audio_data[start_sample : start_sample + n_samples] += chord * 2.0
         elif ev_type == "burst":
-            # MORT DE LA BOLA: Espetec contundent amb greus forts i soroll nítid (MOLT MÉS ALT)
+            # MORT DE LA BOLA (espetec contundent a màxim volum)
             note_len = 0.22
             n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
             t = np.linspace(0, note_len, n_samples, False)
@@ -217,7 +216,7 @@ def synthesize_soundtrack(
             ) * np.exp(-16 * t)
             audio_data[start_sample : start_sample + n_samples] += burst * 2.4
         else:
-            # REBOT CONTRA BOLES GRISES: Nota harmònica forta i clara amb doble ona (MOLT MÉS ALT)
+            # REBOT CONTRA BOLES GRISES (nota brillant a màxim volum)
             freq = FREQUENCIES[note_idx % len(FREQUENCIES)]
             note_len = 0.11
             n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
@@ -228,7 +227,6 @@ def synthesize_soundtrack(
             ) * np.exp(-24 * t)
             audio_data[start_sample : start_sample + n_samples] += pop * 1.7 * duck
 
-    # Normalització global al 100% de volum
     max_amp = np.max(np.abs(audio_data))
     if max_amp > 0:
         audio_int16 = (audio_data / max_amp * 31800).astype(np.int16)
@@ -283,7 +281,6 @@ def run():
 
         page = context.new_page()
 
-        # Paràmetre anticatxé
         cache_buster = random.randint(100000, 999999)
         final_sim_url = f"{sim_url}?cb={cache_buster}"
 
