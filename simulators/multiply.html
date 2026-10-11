@@ -113,7 +113,7 @@
     const CENTER = { x: WIDTH / 2, y: HEIGHT / 2 };
 
     const ARENA_RADIUS = 390;
-    const BALL_RADIUS = 7.5;          // Mida optimitzada per encabir 2.000 boles
+    const BALL_RADIUS = 7.5;          // Mida compacta per encabir 2.000 boles
     const BALL_SPEED = 640;
     const GRAVITY = 780;
     const BOUNCE_RESTITUTION = 1.012;
@@ -173,7 +173,6 @@
       let bestLaunch = null;
       let bestTime = Infinity;
 
-      // Cerca exhaustiva de 360 angles x 3 velocitats (1.080 simulacions en 3ms)
       for (const spd of testSpeeds) {
         for (let a = 0; a < 360; a++) {
           const ang = (a / 360) * Math.PI * 2;
@@ -231,7 +230,6 @@
         return bestLaunch;
       }
 
-      // Tret directe predit cap a la posició futura del forat
       const targetGapAng = (ring.gapAngle + ring.rotSpeed * 0.75) % (Math.PI * 2);
       const targetX = CENTER.x + Math.cos(targetGapAng) * ARENA_RADIUS;
       const targetY = CENTER.y + Math.sin(targetGapAng) * ARENA_RADIUS;
@@ -241,7 +239,6 @@
 
     const firstLaunch = findQuickEscapeLaunch();
 
-    // Bola inicial amb color aleatori i tret calculat
     let balls = [{
       x: CENTER.x,
       y: CENTER.y - 40,
@@ -254,7 +251,6 @@
     let escapedBalls = [];
 
     function spawnTriplet() {
-      // 1 surt -> 3 entren
       for (let i = 0; i < 3; i++) {
         const cIdx = Math.floor(Math.random() * NEON_PALETTE.length);
         const col = NEON_PALETTE[cIdx];
@@ -280,7 +276,6 @@
 
       ring.gapAngle = (ring.gapAngle + ring.rotSpeed * fixedDt) % (Math.PI * 2);
 
-      // Finalització en superar les 1.800-2.000 boles
       if (balls.length >= TARGET_BALLS && !isEnding) {
         isEnding = true;
         setTimeout(() => {
@@ -293,7 +288,6 @@
         }, 1200);
       }
 
-      // Moure boles interiors
       for (let i = balls.length - 1; i >= 0; i--) {
         const b = balls[i];
         b.vy += GRAVITY * fixedDt;
@@ -315,7 +309,6 @@
 
         if (dist >= ARENA_RADIUS - BALL_RADIUS) {
           if (isInGap(hitAng, ring.gapAngle)) {
-            // Surt lliurement pel forat
             if (dist >= ARENA_RADIUS) {
               balls.splice(i, 1);
               escapedBalls.push({
@@ -331,7 +324,6 @@
               continue;
             }
           } else {
-            // Rebot a la paret
             const nx = dx / (dist || 1);
             const ny = dy / (dist || 1);
             const dot = b.vx * nx + b.vy * ny;
@@ -345,7 +337,6 @@
         }
       }
 
-      // Xocs entre boles només al principi (quan n'hi ha poques) per assegurar 60 FPS purs
       if (balls.length <= 40) {
         const minDist = BALL_RADIUS * 2;
         const minDistSq = minDist * minDist;
@@ -384,7 +375,6 @@
         }
       }
 
-      // Moure boles escapades
       escapedBalls.forEach(eb => {
         eb.x += eb.vx * fixedDt;
         eb.y += eb.vy * fixedDt;
@@ -428,7 +418,7 @@
       ctx.fillText('1 ESCAPES  →  3 SPAWN (+3)', CENTER.x, 310);
       ctx.restore();
 
-      // Dibuix de l'anell amb color aleatori
+      // Dibuix de l'anell
       ctx.save();
       ctx.shadowBlur = 24;
       ctx.shadowColor = ring.glow;
