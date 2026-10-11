@@ -172,26 +172,21 @@ def synthesize_soundtrack(
             tts_audio[:n_tts] * 1.5
         )
 
-    # PREPARACIÓ DEL SO D'ESCAPADA: De la carpeta assets/audio (o pop sintètic de reserva)
+    # ÀUDIO COMPLET SENSE RETALLAR: S'utilitza íntegre des de la carpeta assets/audio
     if meme_audio is not None and len(meme_audio) > 0:
-        # Tallem un fragment contundent d'un màxim de 0.28s amb fadeout perquè no enfangui el so
-        max_len = min(len(meme_audio), int(0.28 * SAMPLE_RATE))
-        escape_sound_wave = meme_audio[:max_len].copy()
-        fade_len = int(max_len * 0.3)
-        fade_curve = np.linspace(1.0, 0.0, fade_len)
-        escape_sound_wave[-fade_len:] *= fade_curve
+        escape_sound_wave = meme_audio.copy()
     else:
-        # Pop sintètic net de reserva
-        pop_len = int(0.08 * SAMPLE_RATE)
-        t = np.linspace(0, 0.08, pop_len, False)
+        # Pop de reserva si la carpeta estigués buida
+        pop_len = int(0.12 * SAMPLE_RATE)
+        t = np.linspace(0, 0.12, pop_len, False)
         escape_sound_wave = (
             0.75 * np.sin(2 * np.pi * 950 * t)
             + 0.25 * np.sin(2 * np.pi * 1900 * t)
-        ) * np.exp(-28 * t)
+        ) * np.exp(-22 * t)
 
     n_sound_samples = len(escape_sound_wave)
 
-    # Cada cop que una bola surt pel forat ('spawn'), sona aquest mateix so
+    # Cada cop que una bola surt ('spawn'), s'afegeix l'àudio complet, permetent superposició pura
     for ev in sound_events:
         t_sec = ev.get("time", 0)
         start_sample = int(t_sec * SAMPLE_RATE)
@@ -199,12 +194,10 @@ def synthesize_soundtrack(
             continue
 
         n_samples = min(n_sound_samples, total_samples - start_sample)
-        audio_data[start_sample : start_sample + n_samples] += (
-            escape_sound_wave[:n_samples] * 0.85
-        )
+        audio_data[start_sample : start_sample + n_samples] += escape_sound_wave[:n_samples]
 
-    # Limitador suau (tanh) per evitar distorsió digital quan sonen centenars d'escapades alhora
-    audio_data = np.tanh(audio_data * 1.05)
+    # Limitador suau (tanh) per permetre distorsió caòtica controlada sense petar els altaveus
+    audio_data = np.tanh(audio_data * 0.95)
 
     # Normalització global al 100% de volum
     max_amp = np.max(np.abs(audio_data))
@@ -219,7 +212,7 @@ def synthesize_soundtrack(
         wf.setframerate(SAMPLE_RATE)
         wf.writeframes(audio_int16.tobytes())
 
-    print(f"🎵 Àudio sintetitzat ({len(sound_events)} escapades, {duration_sec:.1f}s).")
+    print(f"🎵 Àudio sintetitzat amb sons complets superposats ({len(sound_events)} escapades, {duration_sec:.1f}s).")
 
 
 def resolve_simulation_url():
