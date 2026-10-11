@@ -19,14 +19,14 @@ SELECTED_MODE = "multiply"
 # ==============================================================================
 
 HOOK_PHRASES = [
-    "Watch how many balls we can get!",
+    "Watch us reach 2,000 balls!",
     "One ball escapes, three more spawn!",
     "Watch the circle fill up completely!",
-    "It multiplies non-stop!",
-    "Can the circle contain 500 balls?",
-    "Watch 1 ball turn into hundreds!",
+    "Can the circle contain 2,000 balls?",
+    "Watch 1 ball turn into thousands!",
+    "Look how packed the circle gets!",
     "Watch the balls multiply out of control!",
-    "Bet how many balls will fit inside!",
+    "Wait until the circle is completely full!",
 ]
 
 PORT = 8080
@@ -162,7 +162,7 @@ def synthesize_soundtrack(
     total_samples = int((duration_sec + 1.5) * SAMPLE_RATE)
     audio_data = np.zeros(total_samples, dtype=np.float32)
 
-    # Inserció de la veu inicial amb ducking
+    # Inserció de la veu inicial
     tts_start_sample = int(0.15 * SAMPLE_RATE)
     tts_end_sample = 0
     if tts_audio is not None and len(tts_audio) > 0:
@@ -172,58 +172,46 @@ def synthesize_soundtrack(
             tts_audio[:n_tts] * 1.5
         )
 
-    FREQUENCIES = [329.63, 392.00, 440.00, 493.88, 587.33, 659.25, 783.99]
+    # PALETA DE SONS D'ESCAPADA: Se'n tria un a l'atzar per a tot el vídeo
+    SOUND_PROFILES = [
+        {"name": "Crystal Ping", "f1": 1046.50, "f2": 2093.00, "decay": 24, "len": 0.09},
+        {"name": "Wood Pop", "f1": 820.00, "f2": 1640.00, "decay": 32, "len": 0.07},
+        {"name": "Electric Blip", "f1": 1318.51, "f2": 2637.02, "decay": 28, "len": 0.08},
+        {"name": "Marimba Pluck", "f1": 659.25, "f2": 1318.51, "decay": 26, "len": 0.09},
+        {"name": "Water Drop", "f1": 950.00, "f2": 1900.00, "decay": 30, "len": 0.08},
+        {"name": "Arcade Chime", "f1": 1174.66, "f2": 2349.32, "decay": 25, "len": 0.09},
+    ]
 
+    chosen_sound = random.choice(SOUND_PROFILES)
+    print(f"🔔 So d'escapada triat per a aquest vídeo: {chosen_sound['name']}")
+
+    f1 = chosen_sound["f1"]
+    f2 = chosen_sound["f2"]
+    decay = chosen_sound["decay"]
+    note_len = chosen_sound["len"]
+    n_note_samples = int(note_len * SAMPLE_RATE)
+
+    # Síntesi ràpida de l'ona del so escollit
+    t = np.linspace(0, note_len, n_note_samples, False)
+    single_pop_wave = (
+        0.75 * np.sin(2 * np.pi * f1 * t)
+        + 0.25 * np.sin(2 * np.pi * f2 * t)
+    ) * np.exp(-decay * t)
+
+    # Inserció a cada esdeveniment d'escapada
     for ev in sound_events:
         t_sec = ev.get("time", 0)
-        ev_type = ev.get("type", "bounce")
-        note_idx = ev.get("note", 0)
-        is_reveal = ev.get("isEscape", False)
-
         start_sample = int(t_sec * SAMPLE_RATE)
         if start_sample >= total_samples:
             continue
 
-        is_during_tts = tts_start_sample <= start_sample <= tts_end_sample
-        duck = 0.45 if is_during_tts else 1.0
+        n_samples = min(n_note_samples, total_samples - start_sample)
+        audio_data[start_sample : start_sample + n_samples] += single_pop_wave[:n_samples] * 0.9
 
-        if is_reveal and meme_audio is not None:
-            n_samples = min(len(meme_audio), total_samples - start_sample)
-            audio_data[start_sample : start_sample + n_samples] += (
-                meme_audio[:n_samples] * 1.8
-            )
-        elif is_reveal:
-            # Acord final brillant en assolir les 500 boles
-            note_len = 1.6
-            n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
-            t = np.linspace(0, note_len, n_samples, False)
-            chord = (
-                0.5 * np.sin(2 * np.pi * 523.25 * t)
-                + 0.4 * np.sin(2 * np.pi * 659.25 * t)
-                + 0.5 * np.sin(2 * np.pi * 783.99 * t)
-                + 0.4 * np.sin(2 * np.pi * 1046.50 * t)
-            ) * np.exp(-2.2 * t)
-            audio_data[start_sample : start_sample + n_samples] += chord * 2.2
-        elif ev_type == "spawn":
-            # So d'aparició de noves boles (+3)
-            note_len = 0.12
-            n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
-            t = np.linspace(0, note_len, n_samples, False)
-            spawn_tone = (
-                0.6 * np.sin(2 * np.pi * 987.77 * t)
-                + 0.4 * np.sin(2 * np.pi * 1318.51 * t)
-            ) * np.exp(-22 * t)
-            audio_data[start_sample : start_sample + n_samples] += spawn_tone * 1.6
-        else:
-            # Rebot harmònic curt
-            freq = FREQUENCIES[note_idx % len(FREQUENCIES)]
-            note_len = 0.06
-            n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
-            t = np.linspace(0, note_len, n_samples, False)
-            pop = np.sin(2 * np.pi * freq * t) * np.exp(-36 * t)
-            audio_data[start_sample : start_sample + n_samples] += pop * 0.8 * duck
+    # Limitador suau (tanh) per evitar distorsió quan sonen desenes d'escapades alhora
+    audio_data = np.tanh(audio_data * 1.1)
 
-    # Normalització global al màxim de volum
+    # Normalització global al 100% de volum
     max_amp = np.max(np.abs(audio_data))
     if max_amp > 0:
         audio_int16 = (audio_data / max_amp * 31800).astype(np.int16)
@@ -236,7 +224,7 @@ def synthesize_soundtrack(
         wf.setframerate(SAMPLE_RATE)
         wf.writeframes(audio_int16.tobytes())
 
-    print(f"🎵 Àudio sintetitzat correctament ({duration_sec:.1f}s).")
+    print(f"🎵 Àudio sintetitzat ({len(sound_events)} escapades amb {chosen_sound['name']}, {duration_sec:.1f}s).")
 
 
 def resolve_simulation_url():
@@ -302,12 +290,12 @@ def run():
         raw_video = "raw_simulation.webm"
 
         with page.expect_download(timeout=120000) as download_info:
-            print("Enregistrant mode Multiply Swarm (fins a 500 boles)...")
+            print("Enregistrant mode Multiply Swarm (fins a 2.000 boles)...")
             page.evaluate("window.startRecording()")
 
         sound_events = page.evaluate("window.soundEvents || []")
         actual_duration = page.evaluate("window.actualDuration || 28.0")
-        final_balls = page.evaluate("window.finalBalls || 500")
+        final_balls = page.evaluate("window.finalBalls || 1800")
 
         download = download_info.value
         download.save_as(raw_video)
