@@ -13,21 +13,72 @@ from playwright.sync_api import sync_playwright
 import requests
 
 # ==============================================================================
-# ⚙️ PANELL DE CONTROL PRINCIPAL
+# ⚙️ PANELL DE CONTROL PRINCIPAL: TRIA EL MODE AQUÍ
 # ==============================================================================
+# Opcions disponibles: "multiply", "spikes", "accumulation", "tracker", "classic", "battle"
 SELECTED_MODE = "multiply"
 # ==============================================================================
 
-HOOK_PHRASES = [
-    "Watch us reach 2,000 balls!",
-    "One ball escapes, three more spawn!",
-    "Watch the circle fill up completely!",
-    "Can the circle contain 2,000 balls?",
-    "Watch 1 ball turn into thousands!",
-    "Look how packed the circle gets!",
-    "Watch the balls multiply out of control!",
-    "Wait until the circle is completely full!",
-]
+# Hooks de veu específics i adaptats a la mecànica de cada mode
+MODE_HOOKS = {
+    "multiply": [
+        "Watch us reach 2,000 balls!",
+        "One ball escapes, three more spawn!",
+        "Watch the circle fill up completely!",
+        "Can the circle contain 2,000 balls?",
+        "Watch 1 ball turn into thousands!",
+        "Look how packed the circle gets!",
+        "Watch the balls multiply out of control!",
+        "Wait until the circle is completely full!",
+    ],
+    "spikes": [
+        "Touch the spike, lose the ball!",
+        "Can any ball escape the spikes?",
+        "How many balls will it take to escape?",
+        "Watch the balls sacrifice themselves!",
+        "Don't touch the spikes!",
+        "Will the final ball make it out?",
+        "Guess how many balls will pop!",
+        "Only one ball can make it through!",
+    ],
+    "accumulation": [
+        "Can the ball escape before freezing?",
+        "Will any ball manage to escape?",
+        "How many balls will freeze before one escapes?",
+        "Guess how many balls will freeze!",
+        "Watch the arena fill up with frozen balls!",
+        "Can the final ball make it out?",
+        "Bet how many balls it takes to escape!",
+        "Which ball will break through?",
+    ],
+    "tracker": [
+        "Don't lose the red ball!",
+        "Keep your eyes on the red ball!",
+        "Can you track the red ball to the end?",
+        "Don't blink or you'll lose the red ball!",
+        "Focus! Which number is the red ball?",
+        "Follow the red ball and guess the number!",
+        "Test your focus! Track the red ball!",
+    ],
+    "classic": [
+        "Which ball will escape first?",
+        "Which color are you betting on?",
+        "Pick a color right now!",
+        "Which ball will break through all rings?",
+        "Guess which ball wins!",
+        "Who is winning this race?",
+        "Can you guess the winner?",
+    ],
+    "battle": [
+        "Which ball will survive?",
+        "Which color will win?",
+        "Who will be the last one standing?",
+        "Pick your ball before it starts!",
+        "Which color is going to lose first?",
+        "Who is winning this battle?",
+        "Watch until the last ball remains!",
+    ],
+}
 
 PORT = 8080
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -56,9 +107,10 @@ async def _async_generate_voice(text, output_mp3):
     await communicate.save(output_mp3)
 
 
-def generate_tts_intro():
-    chosen_phrase = random.choice(HOOK_PHRASES)
-    print(f"🎙️ Generant veu Edge-TTS: \"{chosen_phrase}\"")
+def generate_tts_intro(mode):
+    phrases = MODE_HOOKS.get(mode, MODE_HOOKS["classic"])
+    chosen_phrase = random.choice(phrases)
+    print(f"🎙️ Generant veu Edge-TTS per al mode [{mode.upper()}]: \"{chosen_phrase}\"")
 
     temp_mp3 = "temp_tts.mp3"
     temp_wav = "temp_tts.wav"
@@ -154,6 +206,7 @@ def load_random_meme_sound():
 def synthesize_soundtrack(
     sound_events,
     duration_sec,
+    mode,
     meme_audio=None,
     tts_audio=None,
     output_wav="audio.wav",
@@ -172,34 +225,157 @@ def synthesize_soundtrack(
             tts_audio[:n_tts] * 1.5
         )
 
-    # ÀUDIO COMPLET SENSE RETALLAR: S'utilitza íntegre des de la carpeta assets/audio
-    if meme_audio is not None and len(meme_audio) > 0:
-        escape_sound_wave = meme_audio.copy()
-    else:
-        # Pop de reserva si la carpeta estigués buida
-        pop_len = int(0.12 * SAMPLE_RATE)
-        t = np.linspace(0, 0.12, pop_len, False)
-        escape_sound_wave = (
-            0.75 * np.sin(2 * np.pi * 950 * t)
-            + 0.25 * np.sin(2 * np.pi * 1900 * t)
-        ) * np.exp(-22 * t)
+    FREQUENCIES = [329.63, 392.00, 440.00, 493.88, 587.33, 659.25, 783.99]
 
-    n_sound_samples = len(escape_sound_wave)
+    # PREPARACIÓ DEL SO D'ESCAPADA PER AL MODE MULTIPLY (del teu arxiu assets/audio)
+    if mode == "multiply":
+        if meme_audio is not None and len(meme_audio) > 0:
+            max_len = min(len(meme_audio), int(0.26 * SAMPLE_RATE))
+            escape_wave = meme_audio[:max_len].copy()
+            fade_len = int(max_len * 0.35)
+            fade_curve = np.linspace(1.0, 0.0, fade_len)
+            escape_wave[-fade_len:] *= fade_curve
+        else:
+            pop_len = int(0.08 * SAMPLE_RATE)
+            t = np.linspace(0, 0.08, pop_len, False)
+            escape_wave = (
+                0.75 * np.sin(2 * np.pi * 950 * t)
+                + 0.25 * np.sin(2 * np.pi * 1900 * t)
+            ) * np.exp(-28 * t)
+        n_esc_samples = len(escape_wave)
 
-    # Cada cop que una bola surt ('spawn'), s'afegeix l'àudio complet, permetent superposició pura
     for ev in sound_events:
         t_sec = ev.get("time", 0)
+        ev_type = ev.get("type", "bounce")
+        note_idx = ev.get("note", 0)
+        is_reveal = ev.get("isEscape", False)
+
         start_sample = int(t_sec * SAMPLE_RATE)
         if start_sample >= total_samples:
             continue
 
-        n_samples = min(n_sound_samples, total_samples - start_sample)
-        audio_data[start_sample : start_sample + n_samples] += escape_sound_wave[:n_samples]
+        is_during_tts = tts_start_sample <= start_sample <= tts_end_sample
+        duck = 0.45 if is_during_tts else 1.0
 
-    # Limitador suau (tanh) per permetre distorsió caòtica controlada sense petar els altaveus
-    audio_data = np.tanh(audio_data * 0.95)
+        # --- PROCESSAMENT ESPECÍFIC PER A CADA MODE ---
+        if mode == "multiply":
+            # Al mode multiply només sona el so quan surt una bola (sense rebots ni acords finals)
+            if ev_type == "spawn":
+                n_samples = min(n_esc_samples, total_samples - start_sample)
+                audio_data[start_sample : start_sample + n_samples] += (
+                    escape_wave[:n_samples] * 0.85
+                )
 
-    # Normalització global al 100% de volum
+        elif mode == "spikes":
+            if is_reveal and meme_audio is not None:
+                n_samples = min(len(meme_audio), total_samples - start_sample)
+                audio_data[start_sample : start_sample + n_samples] += meme_audio[:n_samples] * 1.8
+            elif is_reveal:
+                note_len = 1.4
+                n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
+                t = np.linspace(0, note_len, n_samples, False)
+                chord = (
+                    0.5 * np.sin(2 * np.pi * 523.25 * t)
+                    + 0.4 * np.sin(2 * np.pi * 659.25 * t)
+                    + 0.5 * np.sin(2 * np.pi * 783.99 * t)
+                    + 0.4 * np.sin(2 * np.pi * 1046.50 * t)
+                ) * np.exp(-3.0 * t)
+                audio_data[start_sample : start_sample + n_samples] += chord * 2.0
+            elif ev_type == "burst":
+                # Mort de la bola contra la punxa
+                note_len = 0.22
+                n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
+                t = np.linspace(0, note_len, n_samples, False)
+                burst = (
+                    0.75 * np.sin(2 * np.pi * 160 * t)
+                    + 0.45 * np.sin(2 * np.pi * 320 * t)
+                    + (np.random.rand(n_samples) - 0.5) * 0.55
+                ) * np.exp(-16 * t)
+                audio_data[start_sample : start_sample + n_samples] += burst * 2.4
+            else:
+                # Rebot contra boles grises
+                freq = FREQUENCIES[note_idx % len(FREQUENCIES)]
+                note_len = 0.11
+                n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
+                t = np.linspace(0, note_len, n_samples, False)
+                pop = (
+                    0.75 * np.sin(2 * np.pi * freq * t)
+                    + 0.35 * np.sin(2 * np.pi * (freq * 2) * t)
+                ) * np.exp(-24 * t)
+                audio_data[start_sample : start_sample + n_samples] += pop * 1.7 * duck
+
+        elif mode == "accumulation":
+            if is_reveal and meme_audio is not None:
+                n_samples = min(len(meme_audio), total_samples - start_sample)
+                audio_data[start_sample : start_sample + n_samples] += meme_audio[:n_samples] * 1.5
+            elif is_reveal:
+                note_len = 1.3
+                n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
+                t = np.linspace(0, note_len, n_samples, False)
+                chord = (
+                    0.5 * np.sin(2 * np.pi * 523.25 * t)
+                    + 0.4 * np.sin(2 * np.pi * 659.25 * t)
+                    + 0.5 * np.sin(2 * np.pi * 783.99 * t)
+                ) * np.exp(-3.5 * t)
+                audio_data[start_sample : start_sample + n_samples] += chord * 1.8
+            elif ev_type == "freeze":
+                # So de congelació de gel
+                note_len = 0.22
+                n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
+                t = np.linspace(0, note_len, n_samples, False)
+                ice = (
+                    np.sin(2 * np.pi * 880 * t) * 0.4
+                    + np.sin(2 * np.pi * 1760 * t) * 0.3
+                    + (np.random.rand(n_samples) - 0.5) * 0.25
+                ) * np.exp(-12 * t)
+                audio_data[start_sample : start_sample + n_samples] += ice * 0.80
+            else:
+                freq = FREQUENCIES[note_idx % len(FREQUENCIES)]
+                note_len = 0.08
+                n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
+                t = np.linspace(0, note_len, n_samples, False)
+                pop = np.sin(2 * np.pi * freq * t) * np.exp(-35 * t)
+                audio_data[start_sample : start_sample + n_samples] += pop * 0.6 * duck
+
+        elif mode == "tracker":
+            if is_reveal and meme_audio is not None:
+                n_samples = min(len(meme_audio), total_samples - start_sample)
+                audio_data[start_sample : start_sample + n_samples] += meme_audio[:n_samples] * 1.5
+            elif is_reveal:
+                note_len = 1.2
+                n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
+                t = np.linspace(0, note_len, n_samples, False)
+                chord = (
+                    0.5 * np.sin(2 * np.pi * 523.25 * t)
+                    + 0.5 * np.sin(2 * np.pi * 783.99 * t)
+                    + 0.4 * np.sin(2 * np.pi * 1046.50 * t)
+                ) * np.exp(-3.5 * t)
+                audio_data[start_sample : start_sample + n_samples] += chord * 1.8
+            elif ev_type == "pop":
+                note_len = 0.04
+                n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
+                t = np.linspace(0, note_len, n_samples, False)
+                pop = np.sin(2 * np.pi * 1800 * t) * np.exp(-90 * t)
+                audio_data[start_sample : start_sample + n_samples] += pop * 0.60
+            else:
+                note_len = 0.05
+                n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
+                t = np.linspace(0, note_len, n_samples, False)
+                click = np.sin(2 * np.pi * 1100 * t) * np.exp(-65 * t)
+                audio_data[start_sample : start_sample + n_samples] += click * 0.50 * duck
+
+        else:
+            # Modes Classic i Battle
+            freq = FREQUENCIES[note_idx % len(FREQUENCIES)]
+            note_len = 0.12
+            n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
+            t = np.linspace(0, note_len, n_samples, False)
+            pop = np.sin(2 * np.pi * freq * t) * np.exp(-25 * t)
+            audio_data[start_sample : start_sample + n_samples] += pop * 0.8 * duck
+
+    # Limitador suau (tanh) per evitar distorsió digital
+    audio_data = np.tanh(audio_data * 1.05)
+
     max_amp = np.max(np.abs(audio_data))
     if max_amp > 0:
         audio_int16 = (audio_data / max_amp * 31800).astype(np.int16)
@@ -212,15 +388,13 @@ def synthesize_soundtrack(
         wf.setframerate(SAMPLE_RATE)
         wf.writeframes(audio_int16.tobytes())
 
-    print(f"🎵 Àudio sintetitzat amb sons complets superposats ({len(sound_events)} escapades, {duration_sec:.1f}s).")
+    print(f"🎵 Àudio sintetitzat correctament ({len(sound_events)} esdeveniments, {duration_sec:.1f}s).")
 
 
-def resolve_simulation_url():
+def resolve_simulation_url(mode):
     possible_candidates = [
-        os.path.join("simulators", f"{SELECTED_MODE}.html"),
-        f"{SELECTED_MODE}.html",
-        os.path.join("simulators", "spikes.html"),
-        "spikes.html",
+        os.path.join("simulators", f"{mode}.html"),
+        f"{mode}.html",
     ]
 
     for rel_path in possible_candidates:
@@ -232,16 +406,19 @@ def resolve_simulation_url():
 
     all_files = os.listdir(BASE_DIR)
     raise FileNotFoundError(
-        f"❌ No s'ha trobat {SELECTED_MODE}.html a {BASE_DIR}. Fitxers: {all_files}"
+        f"❌ No s'ha trobat {mode}.html a {BASE_DIR} ni a simulators/. Fitxers existents: {all_files}"
     )
 
 
 def run():
+    active_mode = SELECTED_MODE.lower().strip()
+    print(f"🚀 INICIANT RENDERITZAT DEL MODE: [{active_mode.upper()}]")
+
     start_local_server()
     meme_audio, meme_name = load_random_meme_sound()
-    tts_audio, tts_phrase = generate_tts_intro()
+    tts_audio, tts_phrase = generate_tts_intro(active_mode)
 
-    sim_url = resolve_simulation_url()
+    sim_url = resolve_simulation_url(active_mode)
 
     with sync_playwright() as p:
         print("Iniciant Firefox en mode headless...")
@@ -278,25 +455,32 @@ def run():
         raw_video = "raw_simulation.webm"
 
         with page.expect_download(timeout=120000) as download_info:
-            print("Enregistrant mode Multiply Swarm (fins a 2.000 boles)...")
+            print(f"Enregistrant simulació del mode {active_mode}...")
             page.evaluate("window.startRecording()")
 
         sound_events = page.evaluate("window.soundEvents || []")
         actual_duration = page.evaluate("window.actualDuration || 28.0")
-        final_balls = page.evaluate("window.finalBalls || 1800")
+        winner_name = page.evaluate("window.winnerName || ''")
+        frozen_count = page.evaluate("window.frozenCount || 0")
+        final_balls = page.evaluate("window.finalBalls || 0")
 
         download = download_info.value
         download.save_as(raw_video)
-        print(f"Repte completat! S'han assolit {final_balls} boles ({actual_duration:.1f}s).")
+        print(f"Simulació acabada! Durada: {actual_duration:.1f}s.")
         browser.close()
 
     audio_file = "simulation_audio.wav"
     synthesize_soundtrack(
-        sound_events, actual_duration, meme_audio, tts_audio, audio_file
+        sound_events,
+        actual_duration,
+        active_mode,
+        meme_audio,
+        tts_audio,
+        audio_file,
     )
 
     final_mp4 = "bouncelab_video.mp4"
-    print("Empaquetant MP4 a 30 FPS...")
+    print("Empaquetant MP4 a 30 FPS amb H.264...")
     subprocess.run(
         [
             "ffmpeg",
@@ -338,12 +522,36 @@ def run():
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID and os.path.exists(final_mp4):
         print("Enviant el vídeo per Telegram...")
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVideo"
-        meme_caption = f"\n🔊 So mem: {meme_name}" if meme_name else ""
+
+        # Caption personalitzat segons el mode
+        if active_mode == "multiply":
+            title_badge = "💥 [MULTIPLY SWARM]"
+            details = f"🔮 Boles aconseguides: {final_balls}"
+        elif active_mode == "spikes":
+            title_badge = "⚡ [TOUCH THE SPIKE LOSE THE BALL]"
+            details = f"💀 Boles sacrificades: {frozen_count}\n🏆 Bola que ha escapat: #{winner_name}"
+        elif active_mode == "accumulation":
+            title_badge = "🧊 [ACCUMULATION MODE]"
+            details = f"❄️ Boles congelades: {frozen_count}\n🏆 Bola que ha escapat: #{winner_name}"
+        elif active_mode == "tracker":
+            title_badge = "🎯 [DON'T LOSE THE RED BALL]"
+            details = f"🏆 Bola correcta: #{winner_name}"
+        elif active_mode == "classic":
+            title_badge = "🌀 [NEON RINGS ESCAPE]"
+            details = f"🏆 Guanyador: {winner_name}"
+        elif active_mode == "battle":
+            title_badge = "⚔️ [STRING BATTLE ROYALE]"
+            details = f"🏆 Guanyador: {winner_name}"
+        else:
+            title_badge = f"🎮 [{active_mode.upper()}]"
+            details = f"🏆 Resultat: {winner_name}"
+
+        meme_note = f"\n🔊 Àudio utilitzat: {meme_name}" if meme_name else ""
         caption_text = (
-            f"💥 [MULTIPLY SWARM]\n"
+            f"{title_badge}\n"
             f"🎙️ Hook: \"{tts_phrase}\"\n"
-            f"🔮 Boles aconseguides: {final_balls}\n"
-            f"⏱️ Durada: {actual_duration:.1f}s{meme_caption}\n"
+            f"{details}\n"
+            f"⏱️ Durada: {actual_duration:.1f}s{meme_note}\n"
             f"📦 Pes: {file_size_mb:.1f} MB\n"
             f"Canal: @bouncelab.tv 🚀"
         )
