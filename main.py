@@ -15,18 +15,18 @@ import requests
 # ==============================================================================
 # ⚙️ PANELL DE CONTROL PRINCIPAL
 # ==============================================================================
-SELECTED_MODE = "spikes"
+SELECTED_MODE = "multiply"
 # ==============================================================================
 
 HOOK_PHRASES = [
-    "Touch the spike, lose the ball!",
-    "Can any ball escape the spikes?",
-    "How many balls will it take to escape?",
-    "Watch the balls sacrifice themselves!",
-    "Don't touch the spikes!",
-    "Will the final ball make it out?",
-    "Guess how many balls will pop!",
-    "Only one ball can make it through!",
+    "Wait until the simulator crashes!",
+    "One ball escapes, three more spawn!",
+    "Watch the circle overflow completely!",
+    "It multiplies until it breaks the system!",
+    "Can the circle contain all these balls?",
+    "Wait for the critical system overload!",
+    "Watch the balls multiply out of control!",
+    "Bet how many balls it takes to crash!",
 ]
 
 PORT = 8080
@@ -192,41 +192,39 @@ def synthesize_soundtrack(
             audio_data[start_sample : start_sample + n_samples] += (
                 meme_audio[:n_samples] * 1.8
             )
-        elif is_reveal:
-            # Acord triomfant d'escapada
-            note_len = 1.4
+        elif is_reveal or ev_type == "glitch":
+            # SO DE SOBRECÀRREGA / GLITCH DIGITAL / CRASH
+            note_len = 2.2
             n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
             t = np.linspace(0, note_len, n_samples, False)
-            chord = (
-                0.5 * np.sin(2 * np.pi * 523.25 * t)
-                + 0.4 * np.sin(2 * np.pi * 659.25 * t)
-                + 0.5 * np.sin(2 * np.pi * 783.99 * t)
-                + 0.4 * np.sin(2 * np.pi * 1046.50 * t)
-            ) * np.exp(-3.0 * t)
-            audio_data[start_sample : start_sample + n_samples] += chord * 2.0
-        elif ev_type == "burst":
-            # MORT DE LA BOLA (espetec contundent a màxim volum)
-            note_len = 0.22
-            n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
-            t = np.linspace(0, note_len, n_samples, False)
-            burst = (
-                0.75 * np.sin(2 * np.pi * 160 * t)
-                + 0.45 * np.sin(2 * np.pi * 320 * t)
-                + (np.random.rand(n_samples) - 0.5) * 0.55
-            ) * np.exp(-16 * t)
-            audio_data[start_sample : start_sample + n_samples] += burst * 2.4
-        else:
-            # REBOT CONTRA BOLES GRISES (nota brillant a màxim volum)
-            freq = FREQUENCIES[note_idx % len(FREQUENCIES)]
-            note_len = 0.11
-            n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
-            t = np.linspace(0, note_len, n_samples, False)
-            pop = (
-                0.75 * np.sin(2 * np.pi * freq * t)
-                + 0.35 * np.sin(2 * np.pi * (freq * 2) * t)
-            ) * np.exp(-24 * t)
-            audio_data[start_sample : start_sample + n_samples] += pop * 1.7 * duck
 
+            # Baixos profunds (55Hz) + soroll blanc de fallada digital + pols d'alarma
+            sub_bass = 0.7 * np.sin(2 * np.pi * 55 * t) * np.exp(-1.5 * t)
+            noise = (np.random.rand(n_samples) - 0.5) * 0.45 * np.exp(-3.0 * t)
+            alarm = 0.5 * np.sin(2 * np.pi * 880 * t * (1 + 0.5 * np.sin(2 * np.pi * 8 * t))) * np.exp(-1.8 * t)
+
+            glitch_audio = sub_bass + noise + alarm
+            audio_data[start_sample : start_sample + n_samples] += glitch_audio * 2.2
+        elif ev_type == "spawn":
+            # So de multiplicació / spawn de noves boles (+3)
+            note_len = 0.12
+            n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
+            t = np.linspace(0, note_len, n_samples, False)
+            spawn_tone = (
+                0.6 * np.sin(2 * np.pi * 987.77 * t)  # B5
+                + 0.4 * np.sin(2 * np.pi * 1318.51 * t) # E6
+            ) * np.exp(-22 * t)
+            audio_data[start_sample : start_sample + n_samples] += spawn_tone * 1.6
+        else:
+            # Rebot harmònic curt
+            freq = FREQUENCIES[note_idx % len(FREQUENCIES)]
+            note_len = 0.06
+            n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
+            t = np.linspace(0, note_len, n_samples, False)
+            pop = np.sin(2 * np.pi * freq * t) * np.exp(-36 * t)
+            audio_data[start_sample : start_sample + n_samples] += pop * 0.8 * duck
+
+    # Normalització global al màxim de volum
     max_amp = np.max(np.abs(audio_data))
     if max_amp > 0:
         audio_int16 = (audio_data / max_amp * 31800).astype(np.int16)
@@ -239,15 +237,15 @@ def synthesize_soundtrack(
         wf.setframerate(SAMPLE_RATE)
         wf.writeframes(audio_int16.tobytes())
 
-    print(f"🎵 Àudio sintetitzat correctament amb rebots i morts a màxim volum ({duration_sec:.1f}s).")
+    print(f"🎵 Àudio sintetitzat correctament amb efecte de col·lapse digital ({duration_sec:.1f}s).")
 
 
 def resolve_simulation_url():
     possible_candidates = [
         f"{SELECTED_MODE}.html",
         os.path.join("simulators", f"{SELECTED_MODE}.html"),
-        "accumulation.html",
-        os.path.join("simulators", "accumulation.html"),
+        "spikes.html",
+        os.path.join("simulators", "spikes.html"),
     ]
 
     for rel_path in possible_candidates:
@@ -298,17 +296,16 @@ def run():
         raw_video = "raw_simulation.webm"
 
         with page.expect_download(timeout=120000) as download_info:
-            print("Enregistrant mode Spikes...")
+            print("Enregistrant mode Multiply Overload...")
             page.evaluate("window.startRecording()")
 
         sound_events = page.evaluate("window.soundEvents || []")
-        actual_duration = page.evaluate("window.actualDuration || 35.0")
-        winner_ball = page.evaluate("window.winnerName || '?'")
-        dead_count = page.evaluate("window.frozenCount || 0")
+        actual_duration = page.evaluate("window.actualDuration || 28.0")
+        final_balls = page.evaluate("window.finalBalls || 220")
 
         download = download_info.value
         download.save_as(raw_video)
-        print(f"Repte completat! La bola #{winner_ball} ha escapat després de {dead_count} sacrificis ({actual_duration:.1f}s).")
+        print(f"Repte completat! Sobrecàrrega amb {final_balls} boles ({actual_duration:.1f}s).")
         browser.close()
 
     audio_file = "simulation_audio.wav"
@@ -360,10 +357,10 @@ def run():
         print("Enviant el vídeo per Telegram...")
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVideo"
         caption_text = (
-            f"⚡ [TOUCH THE SPIKE LOSE THE BALL]\n"
+            f"💥 [MULTIPLY OVERLOAD]\n"
             f"🎙️ Hook: \"{tts_phrase}\"\n"
-            f"💀 Boles sacrificades: {dead_count}\n"
-            f"🏆 La bola #{winner_ball} ha aconseguit escapar!\n"
+            f"🔮 Boles al col·lapse: {final_balls}\n"
+            f"⚠️ Estat: SYSTEM OVERLOAD!\n"
             f"⏱️ Durada: {actual_duration:.1f}s\n"
             f"📦 Pes: {file_size_mb:.1f} MB\n"
             f"Canal: @bouncelab.tv 🚀"
