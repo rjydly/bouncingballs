@@ -51,7 +51,7 @@ def start_local_server():
 
 async def _async_generate_voice(text, output_mp3):
     communicate = edge_tts.Communicate(
-        text, voice="en-US-ChristopherNeural", rate="+10%", volume="+35%"
+        text, voice="en-US-ChristopherNeural", rate="+10%", volume="+30%"
     )
     await communicate.save(output_mp3)
 
@@ -162,17 +162,18 @@ def synthesize_soundtrack(
     total_samples = int((duration_sec + 1.5) * SAMPLE_RATE)
     audio_data = np.zeros(total_samples, dtype=np.float32)
 
-    # Inserció de la veu inicial amb ducking
+    # Inserció equilibrada de la veu inicial
     tts_start_sample = int(0.15 * SAMPLE_RATE)
     tts_end_sample = 0
     if tts_audio is not None and len(tts_audio) > 0:
         n_tts = min(len(tts_audio), total_samples - tts_start_sample)
         tts_end_sample = tts_start_sample + n_tts + int(0.20 * SAMPLE_RATE)
         audio_data[tts_start_sample : tts_start_sample + n_tts] += (
-            tts_audio[:n_tts] * 2.2
+            tts_audio[:n_tts] * 1.5
         )
 
-    FREQUENCIES = [329.63, 392.00, 440.00, 493.88, 587.33, 659.25]
+    # Escala pentatònica brillant per als rebots
+    FREQUENCIES = [329.63, 392.00, 440.00, 493.88, 587.33, 659.25, 783.99]
 
     for ev in sound_events:
         t_sec = ev.get("time", 0)
@@ -185,14 +186,15 @@ def synthesize_soundtrack(
             continue
 
         is_during_tts = tts_start_sample <= start_sample <= tts_end_sample
-        duck = 0.3 if is_during_tts else 1.0
+        duck = 0.45 if is_during_tts else 1.0
 
         if is_reveal and meme_audio is not None:
             n_samples = min(len(meme_audio), total_samples - start_sample)
             audio_data[start_sample : start_sample + n_samples] += (
-                meme_audio[:n_samples] * 0.95
+                meme_audio[:n_samples] * 1.8
             )
         elif is_reveal:
+            # Acord triomfant d'escapada
             note_len = 1.4
             n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
             t = np.linspace(0, note_len, n_samples, False)
@@ -201,30 +203,37 @@ def synthesize_soundtrack(
                 + 0.4 * np.sin(2 * np.pi * 659.25 * t)
                 + 0.5 * np.sin(2 * np.pi * 783.99 * t)
                 + 0.4 * np.sin(2 * np.pi * 1046.50 * t)
-            ) * np.exp(-3.2 * t)
-            audio_data[start_sample : start_sample + n_samples] += chord
+            ) * np.exp(-3.0 * t)
+            audio_data[start_sample : start_sample + n_samples] += chord * 2.0
         elif ev_type == "burst":
-            note_len = 0.16
+            # MORT DE LA BOLA: Espetec contundent amb greus forts i soroll nítid (MOLT MÉS ALT)
+            note_len = 0.22
             n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
             t = np.linspace(0, note_len, n_samples, False)
             burst = (
-                np.sin(2 * np.pi * 220 * t) * 0.6
-                + (np.random.rand(n_samples) - 0.5) * 0.5
-            ) * np.exp(-22 * t)
-            audio_data[start_sample : start_sample + n_samples] += burst * 0.55
+                0.75 * np.sin(2 * np.pi * 160 * t)
+                + 0.45 * np.sin(2 * np.pi * 320 * t)
+                + (np.random.rand(n_samples) - 0.5) * 0.55
+            ) * np.exp(-16 * t)
+            audio_data[start_sample : start_sample + n_samples] += burst * 2.4
         else:
+            # REBOT CONTRA BOLES GRISES: Nota harmònica forta i clara amb doble ona (MOLT MÉS ALT)
             freq = FREQUENCIES[note_idx % len(FREQUENCIES)]
-            note_len = 0.08
+            note_len = 0.11
             n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
             t = np.linspace(0, note_len, n_samples, False)
-            pop = np.sin(2 * np.pi * freq * t) * np.exp(-35 * t)
-            audio_data[start_sample : start_sample + n_samples] += pop * 0.28 * duck
+            pop = (
+                0.75 * np.sin(2 * np.pi * freq * t)
+                + 0.35 * np.sin(2 * np.pi * (freq * 2) * t)
+            ) * np.exp(-24 * t)
+            audio_data[start_sample : start_sample + n_samples] += pop * 1.7 * duck
 
+    # Normalització global al 100% de volum
     max_amp = np.max(np.abs(audio_data))
     if max_amp > 0:
-        audio_int16 = (audio_data / max_amp * 31500).astype(np.int16)
+        audio_int16 = (audio_data / max_amp * 31800).astype(np.int16)
     else:
-        audio_int16 = (audio_data * 31500).astype(np.int16)
+        audio_int16 = (audio_data * 31800).astype(np.int16)
 
     with wave.open(output_wav, "w") as wf:
         wf.setnchannels(1)
@@ -232,7 +241,7 @@ def synthesize_soundtrack(
         wf.setframerate(SAMPLE_RATE)
         wf.writeframes(audio_int16.tobytes())
 
-    print(f"🎵 Àudio sintetitzat correctament ({duration_sec:.1f}s).")
+    print(f"🎵 Àudio sintetitzat correctament amb rebots i morts a màxim volum ({duration_sec:.1f}s).")
 
 
 def resolve_simulation_url():
@@ -274,7 +283,7 @@ def run():
 
         page = context.new_page()
 
-        # Paràmetre anticatxé per garantir que cada sessió carregui una llavor única
+        # Paràmetre anticatxé
         cache_buster = random.randint(100000, 999999)
         final_sim_url = f"{sim_url}?cb={cache_buster}"
 
