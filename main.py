@@ -19,14 +19,14 @@ SELECTED_MODE = "multiply"
 # ==============================================================================
 
 HOOK_PHRASES = [
-    "Wait until the simulator crashes!",
+    "Watch how many balls we can get!",
     "One ball escapes, three more spawn!",
-    "Watch the circle overflow completely!",
-    "It multiplies until it breaks the system!",
-    "Can the circle contain all these balls?",
-    "Wait for the critical system overload!",
+    "Watch the circle fill up completely!",
+    "It multiplies non-stop!",
+    "Can the circle contain 500 balls?",
+    "Watch 1 ball turn into hundreds!",
     "Watch the balls multiply out of control!",
-    "Bet how many balls it takes to crash!",
+    "Bet how many balls will fit inside!",
 ]
 
 PORT = 8080
@@ -192,20 +192,20 @@ def synthesize_soundtrack(
             audio_data[start_sample : start_sample + n_samples] += (
                 meme_audio[:n_samples] * 1.8
             )
-        elif is_reveal or ev_type == "glitch":
-            # SO DE SOBRECÀRREGA / GLITCH DIGITAL / CRASH
-            note_len = 2.2
+        elif is_reveal:
+            # Acord final brillant en assolir les 500 boles
+            note_len = 1.6
             n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
             t = np.linspace(0, note_len, n_samples, False)
-
-            sub_bass = 0.7 * np.sin(2 * np.pi * 55 * t) * np.exp(-1.5 * t)
-            noise = (np.random.rand(n_samples) - 0.5) * 0.45 * np.exp(-3.0 * t)
-            alarm = 0.5 * np.sin(2 * np.pi * 880 * t * (1 + 0.5 * np.sin(2 * np.pi * 8 * t))) * np.exp(-1.8 * t)
-
-            glitch_audio = sub_bass + noise + alarm
-            audio_data[start_sample : start_sample + n_samples] += glitch_audio * 2.2
+            chord = (
+                0.5 * np.sin(2 * np.pi * 523.25 * t)
+                + 0.4 * np.sin(2 * np.pi * 659.25 * t)
+                + 0.5 * np.sin(2 * np.pi * 783.99 * t)
+                + 0.4 * np.sin(2 * np.pi * 1046.50 * t)
+            ) * np.exp(-2.2 * t)
+            audio_data[start_sample : start_sample + n_samples] += chord * 2.2
         elif ev_type == "spawn":
-            # So de multiplicació / spawn (+3)
+            # So d'aparició de noves boles (+3)
             note_len = 0.12
             n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
             t = np.linspace(0, note_len, n_samples, False)
@@ -215,7 +215,7 @@ def synthesize_soundtrack(
             ) * np.exp(-22 * t)
             audio_data[start_sample : start_sample + n_samples] += spawn_tone * 1.6
         else:
-            # Rebot harmònic
+            # Rebot harmònic curt
             freq = FREQUENCIES[note_idx % len(FREQUENCIES)]
             note_len = 0.06
             n_samples = min(int(note_len * SAMPLE_RATE), total_samples - start_sample)
@@ -278,7 +278,6 @@ def run():
 
         page = context.new_page()
 
-        # Capturem qualsevol error de consola de JavaScript per diagnosticar
         page.on("pageerror", lambda err: print(f"❌ ERROR JS AL NAVEGADOR: {err}"))
         page.on("console", lambda msg: print(f"🖥️ CONSOLE [{msg.type}]: {msg.text}"))
 
@@ -290,7 +289,6 @@ def run():
         if response and response.status >= 400:
             raise RuntimeError(f"Error HTTP {response.status} en carregar {final_sim_url}!")
 
-        # Esperem de forma robusta fins que window.startRecording estigui disponible
         try:
             page.wait_for_function("typeof window.startRecording === 'function'", timeout=6000)
             print("✅ Funció window.startRecording trobada i llesta!")
@@ -304,16 +302,16 @@ def run():
         raw_video = "raw_simulation.webm"
 
         with page.expect_download(timeout=120000) as download_info:
-            print("Enregistrant mode Multiply Overload...")
+            print("Enregistrant mode Multiply Swarm (fins a 500 boles)...")
             page.evaluate("window.startRecording()")
 
         sound_events = page.evaluate("window.soundEvents || []")
         actual_duration = page.evaluate("window.actualDuration || 28.0")
-        final_balls = page.evaluate("window.finalBalls || 220")
+        final_balls = page.evaluate("window.finalBalls || 500")
 
         download = download_info.value
         download.save_as(raw_video)
-        print(f"Repte completat! Sobrecàrrega amb {final_balls} boles ({actual_duration:.1f}s).")
+        print(f"Repte completat! S'han assolit {final_balls} boles ({actual_duration:.1f}s).")
         browser.close()
 
     audio_file = "simulation_audio.wav"
@@ -365,10 +363,9 @@ def run():
         print("Enviant el vídeo per Telegram...")
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVideo"
         caption_text = (
-            f"💥 [MULTIPLY OVERLOAD]\n"
+            f"💥 [MULTIPLY SWARM]\n"
             f"🎙️ Hook: \"{tts_phrase}\"\n"
-            f"🔮 Boles al col·lapse: {final_balls}\n"
-            f"⚠️ Estat: SYSTEM OVERLOAD!\n"
+            f"🔮 Boles aconseguides: {final_balls}\n"
             f"⏱️ Durada: {actual_duration:.1f}s\n"
             f"📦 Pes: {file_size_mb:.1f} MB\n"
             f"Canal: @bouncelab.tv 🚀"
