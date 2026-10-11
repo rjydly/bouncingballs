@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>BounceLab - Multiply Overload Mode</title>
+  <title>BounceLab - Multiply Swarm Mode</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Lexend:wght@700;800;900&display=swap" rel="stylesheet">
@@ -43,7 +43,7 @@
 
   <script>
     // ============================================================
-    // 0. DEFINICIÓ INICIAL DE WINDOW PER EVITAR ERRORS DE PLAYWRIGHT
+    // 0. DEFINICIÓ INICIAL DE WINDOW
     // ============================================================
     window.soundEvents = [];
     window.actualDuration = 0;
@@ -54,12 +54,11 @@
     let startTime = null;
     let isRunning = false;
     let isFinished = false;
-    let isGlitching = false;
-    let glitchStartTime = null;
+    let isEnding = false;
 
-    // Definim startRecording a dalt de tot de l'script immediatament
+    // Registre immediat a dalt de tot de l'script
     window.startRecording = function() {
-      console.log("Iniciant enregistrament de pantalla a 30 FPS...");
+      console.log("Iniciant gravació del mode multiplicador...");
       startTime = performance.now();
       isRunning = true;
       window.soundEvents = [];
@@ -97,13 +96,14 @@
 
       mediaRecorder.start();
 
+      // Topall ampli de seguretat
       setTimeout(() => {
         if (mediaRecorder && mediaRecorder.state !== 'inactive') {
           window.actualDuration = (performance.now() - startTime) / 1000;
           window.finalBalls = balls.length;
           mediaRecorder.stop();
         }
-      }, 35000);
+      }, 45000);
     };
 
     // ============================================================
@@ -114,15 +114,15 @@
     const WIDTH = 1080, HEIGHT = 1920;
     const CENTER = { x: WIDTH / 2, y: HEIGHT / 2 };
 
-    const ARENA_RADIUS = 390;         // Un sol cercle
-    const BALL_RADIUS = 14;           // Mida compacta per permetre centenars de boles
-    const BALL_SPEED = 620;
+    const ARENA_RADIUS = 390;
+    const BALL_RADIUS = 13;           // Mida compacta per encabir 500+ boles
+    const BALL_SPEED = 640;
     const GRAVITY = 750;
     const BOUNCE_RESTITUTION = 1.012;
     const MAX_SPEED = 920;
 
-    const GAP_SIZE = 0.46;            // Mida de l'escletxa giratòria
-    const OVERLOAD_THRESHOLD = 220;   // Límit de boles per activar el col·lapse
+    const GAP_SIZE = 0.46;
+    const TARGET_BALLS = 500;         // El vídeo s'acaba quan supera les 500 boles
 
     const NEON_PALETTE = [
       { color: '#00f2fe', glow: '#00f2fe' },
@@ -140,9 +140,9 @@
         const timeSec = (performance.now() - startTime) / 1000;
         window.soundEvents.push({
           time: timeSec,
-          type: type, // 'bounce', 'spawn', 'glitch'
+          type: type, // 'bounce', 'spawn', 'reveal'
           note: note,
-          isEscape: type === 'glitch'
+          isEscape: type === 'reveal'
         });
       }
     }
@@ -171,14 +171,13 @@
       vx: (Math.random() - 0.5) * BALL_SPEED,
       vy: Math.random() * BALL_SPEED,
       color: '#00f2fe',
-      glow: '#00f2fe',
-      alive: true
+      glow: '#00f2fe'
     }];
 
     let escapedBalls = [];
 
     function spawnTriplet() {
-      // Cada cop que 1 bola surt, n'apareixen 3 de noves
+      // 1 surt -> 3 entren
       for (let i = 0; i < 3; i++) {
         const col = NEON_PALETTE[Math.floor(Math.random() * NEON_PALETTE.length)];
         const ang = Math.random() * Math.PI * 2;
@@ -189,8 +188,7 @@
           vx: Math.cos(ang) * spd,
           vy: Math.sin(ang) * spd,
           color: col.color,
-          glow: col.glow,
-          alive: true
+          glow: col.glow
         });
       }
       recordSound('spawn', 1);
@@ -204,11 +202,10 @@
 
       ring.gapAngle = (ring.gapAngle + ring.rotSpeed * fixedDt) % (Math.PI * 2);
 
-      // Comprovar si s'arriba a la sobrecàrrega
-      if (balls.length >= OVERLOAD_THRESHOLD && !isGlitching) {
-        isGlitching = true;
-        glitchStartTime = performance.now();
-        recordSound('glitch', 99);
+      // Final del vídeo natural en assolir les 500 boles
+      if (balls.length >= TARGET_BALLS && !isEnding) {
+        isEnding = true;
+        recordSound('reveal', 10);
 
         setTimeout(() => {
           if (mediaRecorder && mediaRecorder.state !== 'inactive') {
@@ -217,10 +214,10 @@
             isFinished = true;
             mediaRecorder.stop();
           }
-        }, 2500);
+        }, 1200);
       }
 
-      // Moure boles vives
+      // Moure boles de l'interior
       for (let i = balls.length - 1; i >= 0; i--) {
         const b = balls[i];
         b.vy += GRAVITY * fixedDt;
@@ -240,9 +237,9 @@
         let hitAng = Math.atan2(dy, dx);
         if (hitAng < 0) hitAng += Math.PI * 2;
 
-        // Comprovació del forat: 1 surt -> 3 entren
         if (dist >= ARENA_RADIUS - BALL_RADIUS) {
           if (isInGap(hitAng, ring.gapAngle)) {
+            // Travessa el forat cap a fora
             if (dist >= ARENA_RADIUS) {
               balls.splice(i, 1);
               escapedBalls.push({
@@ -251,7 +248,7 @@
                 vx: b.vx * 1.2,
                 vy: b.vy * 1.2,
                 color: b.color,
-                life: 45
+                life: 38
               });
 
               spawnTriplet();
@@ -268,7 +265,7 @@
               b.x = CENTER.x + nx * (ARENA_RADIUS - BALL_RADIUS);
               b.y = CENTER.y + ny * (ARENA_RADIUS - BALL_RADIUS);
 
-              if (Math.random() < Math.max(0.08, 1 / Math.sqrt(balls.length))) {
+              if (Math.random() < Math.max(0.04, 1 / Math.sqrt(balls.length + 1))) {
                 recordSound('bounce', (balls.length % 7));
               }
             }
@@ -276,8 +273,8 @@
         }
       }
 
-      // Xocs elàstics entre boles
-      const count = Math.min(balls.length, 120);
+      // Col·lisions entre boles (optimitzat)
+      const count = Math.min(balls.length, 90);
       const minDist = BALL_RADIUS * 2;
       const minDistSq = minDist * minDist;
 
@@ -314,17 +311,18 @@
         }
       }
 
-      // Moure boles que han escapat
+      // Moure boles escapades
       escapedBalls.forEach(eb => {
         eb.x += eb.vx * fixedDt;
         eb.y += eb.vy * fixedDt;
         eb.life--;
       });
       escapedBalls = escapedBalls.filter(eb => eb.life > 0);
+      if (escapedBalls.length > 70) escapedBalls.shift();
     }
 
     // ============================================================
-    // 4. RENDERITZAT VISUAL AMB EFECTE GLITCH
+    // 4. RENDERITZAT VISUAL FLUID (60 FPS SENSE GLITCH)
     // ============================================================
     let lastTime = null;
     let physicsAccumulator = 0;
@@ -342,20 +340,10 @@
         physicsAccumulator -= FIXED_PHYSICS_STEP;
       }
 
-      ctx.save();
+      ctx.fillStyle = '#030712';
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
-      // Efecte Glitch: tremolor violent
-      if (isGlitching) {
-        const shakeIntensity = Math.min(32, 10 + (performance.now() - glitchStartTime) * 0.015);
-        const shakeX = (Math.random() - 0.5) * shakeIntensity;
-        const shakeY = (Math.random() - 0.5) * shakeIntensity;
-        ctx.translate(shakeX, shakeY);
-      }
-
-      ctx.fillStyle = isGlitching && Math.random() < 0.15 ? '#111827' : '#030712';
-      ctx.fillRect(-50, -50, WIDTH + 100, HEIGHT + 100);
-
-      // Títol superior
+      // Títol superior net
       ctx.save();
       ctx.textAlign = 'center';
       ctx.font = '800 52px Lexend, sans-serif';
@@ -367,14 +355,11 @@
       ctx.fillText('1 ESCAPES  →  3 SPAWN (+3)', CENTER.x, 310);
       ctx.restore();
 
-      // Dibuix de l'únic cercle
+      // Dibuix de l'únic cercle amb escletxa
       ctx.save();
-      const ringGlow = isGlitching ? '#ff0055' : ring.glow;
-      const ringCol = isGlitching ? (Math.random() < 0.5 ? '#ff0055' : '#ffffff') : ring.color;
-
       ctx.shadowBlur = 24;
-      ctx.shadowColor = ringGlow;
-      ctx.strokeStyle = ringCol;
+      ctx.shadowColor = ring.glow;
+      ctx.strokeStyle = ring.color;
       ctx.lineWidth = 7;
       ctx.lineCap = 'round';
 
@@ -385,9 +370,9 @@
       ctx.stroke();
       ctx.restore();
 
-      // Boles escapades cap a fora
+      // Boles que han sortit fora
       escapedBalls.forEach(eb => {
-        const alpha = eb.life / 45;
+        const alpha = eb.life / 38;
         ctx.save();
         ctx.globalAlpha = alpha;
         ctx.fillStyle = eb.color;
@@ -397,11 +382,12 @@
         ctx.restore();
       });
 
-      // Boles vives
+      // Boles vives a l'interior (optimització d'ombres per a 500+ boles)
+      const useGlow = balls.length < 75;
       balls.forEach(b => {
         ctx.save();
-        if (balls.length < 80) {
-          ctx.shadowBlur = 14;
+        if (useGlow) {
+          ctx.shadowBlur = 12;
           ctx.shadowColor = b.glow;
         }
         ctx.fillStyle = b.color;
@@ -411,40 +397,13 @@
         ctx.restore();
       });
 
-      // Marcador de boles
+      // Marcador de boles gegant
       ctx.save();
       ctx.textAlign = 'center';
-      ctx.font = '900 58px Lexend, sans-serif';
-      ctx.fillStyle = balls.length > 100 ? (Math.random() < 0.3 ? '#ef4444' : '#ffffff') : '#ffffff';
+      ctx.font = '900 62px Lexend, sans-serif';
+      ctx.fillStyle = '#ffffff';
       ctx.fillText(`BALLS: ${balls.length}`, CENTER.x, 385);
       ctx.restore();
-
-      // Avís de sobrecàrrega final
-      if (isGlitching) {
-        ctx.save();
-        ctx.textAlign = 'center';
-
-        for (let l = 0; l < 8; l++) {
-          const gy = Math.random() * HEIGHT;
-          ctx.fillStyle = Math.random() < 0.5 ? 'rgba(0, 242, 254, 0.25)' : 'rgba(255, 0, 85, 0.25)';
-          ctx.fillRect(0, gy, WIDTH, 10 + Math.random() * 20);
-        }
-
-        ctx.font = '900 68px Lexend, sans-serif';
-        ctx.fillStyle = Math.random() < 0.5 ? '#ff0055' : '#ffffff';
-        ctx.shadowBlur = 30;
-        ctx.shadowColor = '#ff0055';
-        ctx.fillText('⚠️ SYSTEM OVERLOAD! ⚠️', CENTER.x, CENTER.y - 30);
-
-        ctx.font = '800 42px Lexend, sans-serif';
-        ctx.fillStyle = '#00f2fe';
-        ctx.fillText(`TOO MANY BALLS (${balls.length})`, CENTER.x, CENTER.y + 45);
-
-        ctx.font = '700 32px Lexend, sans-serif';
-        ctx.fillStyle = '#ffffff';
-        ctx.fillText('SIMULATION CRASHED', CENTER.x, CENTER.y + 105);
-        ctx.restore();
-      }
 
       // Marca d'aigua inferior
       ctx.save();
@@ -453,8 +412,6 @@
       ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
       ctx.fillText('@bouncelab.tv', CENTER.x, HEIGHT - 220);
       ctx.restore();
-
-      ctx.restore(); // Final del shake
 
       requestAnimationFrame(render);
     }
