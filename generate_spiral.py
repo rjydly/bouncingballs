@@ -78,7 +78,6 @@ def render_chunk():
     chunk_idx = int(os.environ.get("CHUNK_INDEX", 0))
     total_chunks = int(os.environ.get("TOTAL_CHUNKS", 1))
 
-    # Càlcul del rang d'aquest runner concret (ex: chunk 0 -> 1 a 12)
     frames_per_chunk = math.ceil(TOTAL_FRAMES / total_chunks)
     start_frame = chunk_idx * frames_per_chunk + 1
     end_frame = min(TOTAL_FRAMES, (chunk_idx + 1) * frames_per_chunk)
@@ -166,13 +165,14 @@ def render_chunk():
     base_mesh.from_pydata(initial_verts.tolist(), [], [])
     base_mesh.update()
 
-    # Només renderitza el seu rang assignat
+    # Renderitzat del rang
     for frame in range(start_frame, end_frame + 1):
         scene.frame_set(frame)
         t = (frame / TOTAL_FRAMES) * math.pi * 4.0
 
+        # CÀLCUL VECTORITZAT CORREGIT AMB np.cos
         z = 1.4 * np.sin(u * math.pi * 3.0 - t) * (1.0 - u * 0.4)
-        r_mod = radii * (1.0 + 0.12 * math.cos(u * math.pi * 2.0 - t))
+        r_mod = radii * (1.0 + 0.12 * np.cos(u * math.pi * 2.0 - t))
         x = r_mod * np.cos(thetas)
         y = r_mod * np.sin(thetas)
 
