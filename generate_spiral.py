@@ -7,34 +7,34 @@ import numpy as np
 import bpy
 
 # ==============================================================================
-# ⚙️ CONFIGURACIÓ I VARIABLES D'ENTORN
+# ⚙️ CONFIGURACIÓ PRINCIPAL (EDITA AQUÍ DIRECTAMENT)
 # ==============================================================================
-TEST_MODE = os.environ.get("TEST_MODE", "false").strip().lower() in ["true", "1", "yes"]
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+TEST_MODE = True  # 👉 CANVIA AQUÍ: True (envia a Telegram) | False (no fa res)
 
 OUTPUT_VIDEO = "output_spiral.mp4"
 TEMP_RAW_VIDEO = "temp_render.mp4"
 TEMP_AUDIO = "temp_chimes.wav"
 
 FPS = 30
-TOTAL_FRAMES = 180  # 6 segons (per prova ràpida a GitHub Actions)
+TOTAL_FRAMES = 180  # 6 segons de durada
 WIDTH = 720
 HEIGHT = 1280
 
+# Secrets de Telegram (es llegeixen de GitHub Actions si TEST_MODE = True)
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+
+
 # ==============================================================================
-# 🔔 1. SÍNTESI D'ÀUDIO PROCEDURAL (CAMPANES DE MEDITACIÓ / RELAX)
+# 🔔 1. SÍNTESI D'ÀUDIO PROCEDURAL (CAMPANES HARMÒNIQUES)
 # ==============================================================================
 def generate_chimes_audio(duration_sec, output_wav):
-    print("🎵 Sintetitzant àudio de campanes sincronitzades...")
+    print("🎵 Sintetitzant àudio de campanes...")
     SAMPLE_RATE = 44100
     n_samples = int(duration_sec * SAMPLE_RATE)
     audio = np.zeros(n_samples, dtype=np.float32)
 
-    # Harmònics de campana de vidre/metàl·lica (Hz)
-    chime_freqs = [523.25, 659.25, 783.99, 1046.50]  # Acord C major cristal·lí
-    
-    # Emet una campana a cada cicle de l'ona (cada 1.5s aproximadament)
+    chime_freqs = [523.25, 659.25, 783.99, 1046.50]
     strike_times = [0.0, 1.5, 3.0, 4.5]
 
     for idx, t_strike in enumerate(strike_times):
@@ -47,8 +47,6 @@ def generate_chimes_audio(duration_sec, output_wav):
         t = np.linspace(0, dur_note, n_note, False)
         
         freq = chime_freqs[idx % len(chime_freqs)]
-        
-        # Superposició harmònica amb caiguda exponencial
         note = (
             0.60 * np.sin(2 * np.pi * freq * t) +
             0.30 * np.sin(2 * np.pi * (freq * 2.02) * t) +
@@ -71,7 +69,7 @@ def generate_chimes_audio(duration_sec, output_wav):
 
 
 # ==============================================================================
-# 🎨 2. MOTOR 3D PROCEDURAL (BLENDER HEADLESS)
+# 🎨 2. RENDERITZAT 3D PROCEDURAL (BLENDER HEADLESS)
 # ==============================================================================
 def render_3d_spiral():
     print("🎬 Construint escena 3D a Blender...")
@@ -84,7 +82,7 @@ def render_3d_spiral():
     scene.render.resolution_x = WIDTH
     scene.render.resolution_y = HEIGHT
 
-    # Cycles per CPU: Sense necessitat de pantalles X11 ni drivers gràfics
+    # Cycles per CPU: Sense finestres ni servidors gràfics
     scene.render.engine = 'CYCLES'
     scene.cycles.device = 'CPU'
     scene.cycles.samples = 16
@@ -126,7 +124,7 @@ def render_3d_spiral():
     bsdf_m.inputs["Metallic"].default_value = 0.95
     bsdf_m.inputs["Roughness"].default_value = 0.05
 
-    # Disc mirall inferior
+    # Disc mirall
     bpy.ops.mesh.primitive_cylinder_add(radius=4.8, depth=0.1, location=(0, 0, -2.8))
     mirror_disc = bpy.context.active_object
     mirror_disc.data.materials.append(mat_mirror)
@@ -153,7 +151,7 @@ def render_3d_spiral():
     base_mesh.from_pydata(initial_verts, [], [])
     base_mesh.update()
 
-    print("Rendering 3D frames...")
+    print("Renderitzant fotogrames 3D...")
     for frame in range(1, TOTAL_FRAMES + 1):
         scene.frame_set(frame)
         t = (frame / TOTAL_FRAMES) * math.pi * 4.0
@@ -182,13 +180,12 @@ def send_telegram_video(video_path):
         print("⚠️ Telegram: Falten credencials TELEGRAM_BOT_TOKEN o TELEGRAM_CHAT_ID.")
         return
 
-    print("📲 Mode de prova actiu: Enviant vídeo a Telegram...")
+    print("📲 TEST_MODE=True: Enviant vídeo a Telegram...")
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVideo"
     caption = (
-        "🧪 <b>BOUNCELAB 3D PROTOTYPE (TEST MODE)</b>\n\n"
-        "✨ <b>Model:</b> Espiral Àuria de Fermat amb Ones 3D\n"
-        "🟢 <b>Elements:</b> 1.200 boles metàl·liques amb reflex mirall\n"
-        "🔔 <b>Àudio:</b> Sincronitzat amb campanes harmòniques"
+        "🧪 <b>PROVA DE CONCEPTE 3D (BLENDER PROCEDURAL)</b>\n\n"
+        "✨ <b>Efecte:</b> Espiral àuria de 1.200 boles metàl·liques amb reflex de mirall\n"
+        "🔔 <b>Àudio:</b> Sincronitzat procedimentalment amb campanes"
     )
 
     try:
@@ -205,18 +202,18 @@ def send_telegram_video(video_path):
                 timeout=180
             )
         if res.status_code == 200:
-            print("✅ Vídeo de prova enviat a Telegram amb èxit!")
+            print("✅ Vídeo enviat a Telegram correctament!")
         else:
-            print(f"❌ Error enviant a Telegram ({res.status_code}): {res.text}")
+            print(f"❌ Error Telegram ({res.status_code}): {res.text}")
     except Exception as e:
         print(f"❌ Excepció Telegram: {e}")
 
 
 # ==============================================================================
-# 🚀 PIPELINE PRINCIPAL
+# 🚀 PUNT D'ENTRADA
 # ==============================================================================
 def main():
-    print(f"🔧 Iniciant generador 3D | TEST_MODE: {TEST_MODE}")
+    print(f"🔧 Estat de la variable TEST_MODE: {TEST_MODE}")
 
     # 1. Generar vídeo 3D
     render_3d_spiral()
@@ -225,8 +222,8 @@ def main():
     duration = TOTAL_FRAMES / FPS
     generate_chimes_audio(duration, TEMP_AUDIO)
 
-    # 3. Unir vídeo i àudio amb FFmpeg
-    print("⚡ Unint àudio i vídeo final...")
+    # 3. Unió FFmpeg
+    print("⚡ Unint àudio i vídeo...")
     subprocess.run(
         [
             "ffmpeg", "-y", "-i", TEMP_RAW_VIDEO, "-i", TEMP_AUDIO,
@@ -236,16 +233,16 @@ def main():
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     )
 
-    # Netejar fitxers temporals
+    # Neteja de temporals
     for f in [TEMP_RAW_VIDEO, TEMP_AUDIO]:
         if os.path.exists(f):
             os.remove(f)
 
-    # 4. Decisió segons TEST_MODE
-    if TEST_MODE:
+    # 4. Decisió segons la variable TEST_MODE
+    if TEST_MODE is True:
         send_telegram_video(OUTPUT_VIDEO)
     else:
-        print("ℹ️ TEST_MODE no està activat. El vídeo està generat a disc, però no s'ha publicat enlloc.")
+        print("⏸️ TEST_MODE és False: el vídeo s'ha generat localment, però no s'ha enviat ni publicat enlloc.")
 
 
 if __name__ == "__main__":
