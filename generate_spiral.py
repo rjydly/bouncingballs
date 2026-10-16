@@ -18,58 +18,59 @@ ASSEMBLE_DIR = "all_frames"
 TEMP_AUDIO = "temp_chimes.wav"
 
 FPS = 30
-TOTAL_FRAMES = 240  # 8 segons (permet veure la transició de pla a ona)
+TOTAL_FRAMES = 480  # 16 segons (480 / 15 = 32 frames per màquina)
 WIDTH = 720
 HEIGHT = 1280
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-# Geometria dels anells concèntrics
+# Geometria i dinàmica lenta
 NUM_RINGS = 16
 R_MIN = 0.35
 R_MAX = 3.60
 BALL_RADIUS = 0.065
-BOUNCE_HEIGHT = 1.35
-BOUNCE_FREQ = 1.15  # Cicles de bot per segon
+BOUNCE_HEIGHT = 1.45
+BOUNCE_FREQ = 0.65  # Baixat a 0.65 per un moviment pausat i flotant (1 bot cada ~1.54s)
 
 # ==============================================================================
-# 📐 CÀLCUL MATEMÀTIC DEL MOVIMENT (TRANSICIÓ PLA -> ONA)
+# 📐 CÀLCUL MATEMÀTIC DEL MOVIMENT LENT (PLA -> ONA)
 # ==============================================================================
 def get_ring_height(ring_idx, t):
     """
-    Calcula l'altura z d'un anell en el temps t.
-    Comença sincronitzat (pla) i progressivament crea un desfasament radial (ona).
+    Moviment suau i lent:
+    - 0s a 4.0s: Totalment pla (2 bots complets sincronitzats a l'uníson).
+    - 4.0s a 12.0s: L'ona es desplega molt lentament i suau del centre enfora.
+    - 12.0s a 16.0s: Ona ondulant completa a velocitat lenta.
     """
     u = ring_idx / (NUM_RINGS - 1)  # 0.0 (centre) a 1.0 (vora exterior)
     
-    # El decalatge de fase (ona) és 0 al principi i creix a partir del segon 1.8
-    if t < 1.8:
+    if t < 4.0:
         wave_dispersion = 0.0
     else:
-        # Creixement suau de la dispersió de fase
-        progress = min(1.0, (t - 1.8) / 3.0)
-        wave_dispersion = progress * math.pi * 1.5
+        # Transició de dispersió molt progressiva al llarg de 7 segons
+        progress = min(1.0, (t - 4.0) / 7.0)
+        # Funció d'acceleració suau (smoothstep)
+        progress_eased = progress * progress * (3.0 - 2.0 * progress)
+        wave_dispersion = progress_eased * math.pi * 1.6
 
-    # Fase: a l'inici wave_dispersion=0, per tant tots els anells comparteixen la mateixa fase
     phase = 2.0 * math.pi * BOUNCE_FREQ * t - (u * wave_dispersion)
     
-    # Bouncing rectificat (altura >= 0 sempre, tocant el terra a z=0)
-    z = BOUNCE_HEIGHT * (abs(math.sin(phase)) ** 1.35)
+    # Gravetat suau rectificada (tocant el terra a z=0)
+    z = BOUNCE_HEIGHT * (abs(math.sin(phase)) ** 1.30)
     return z
 
 
 # ==============================================================================
-# 🔔 1. SÍNTESI D'ÀUDIO PER IMPACTES FÍSICS REALS A TERRA
+# 🔔 1. SÍNTESI D'ÀUDIO PER IMPACTES AMB RESSONÀNCIA PROFUNDA
 # ==============================================================================
 def generate_chimes_audio(duration_sec, output_wav):
-    print("🎵 Calculant impactes contra el terra i sintetitzant notes...")
+    print("🎵 Calculant impactes lents i sintetitzant campanes amb eco profund...")
     SAMPLE_RATE = 44100
     n_samples = int(duration_sec * SAMPLE_RATE)
     audio = np.zeros(n_samples, dtype=np.float32)
 
-    # Escala pentatònica de C major (des de greus a l'exterior fins a aguts al centre)
-    # 16 notes harmòniques cristal·lines
+    # Escala pentatònica de C major
     NOTES_SCALE = [
         130.81, 146.83, 164.81, 196.00, 220.00,  # C3 - A3
         261.63, 293.66, 329.63, 392.00, 440.00,  # C4 - A4
@@ -77,12 +78,11 @@ def generate_chimes_audio(duration_sec, output_wav):
         1046.50                                   # C6
     ]
 
-    # Mostrejar les altures a alta freqüència (600 fps) per detectar els moments de xoc amb el terra (mínims z=0)
     DT_AUDIO_SCAN = 1.0 / 600.0
     scan_steps = int(duration_sec / DT_AUDIO_SCAN)
     
     for ring_idx in range(NUM_RINGS):
-        freq = NOTES_SCALE[(NUM_RINGS - 1) - ring_idx]  # Exterior greu, interior agut
+        freq = NOTES_SCALE[(NUM_RINGS - 1) - ring_idx]
         prev_z = get_ring_height(ring_idx, 0.0)
         prev_vel = 0.0
 
@@ -91,28 +91,28 @@ def generate_chimes_audio(duration_sec, output_wav):
             z_curr = get_ring_height(ring_idx, t_curr)
             vel = z_curr - prev_z
 
-            # Detectem el canvi de sentit just quan la pilota colpeja el terra (vel passa de negativa a positiva i z ~ 0)
+            # Xoc contra el terra
             if prev_vel <= 0.0 and vel > 0.0 and z_curr < 0.08:
                 hit_sample = int(t_curr * SAMPLE_RATE)
                 if hit_sample < n_samples:
-                    # Durada de la ressonància de la campana
-                    note_len = min(int(1.8 * SAMPLE_RATE), n_samples - hit_sample)
+                    # Ressonància més llarga (2.6 segons per campana gràcies al ritme lent)
+                    note_len = min(int(2.6 * SAMPLE_RATE), n_samples - hit_sample)
                     t_note = np.linspace(0, note_len / SAMPLE_RATE, note_len, False)
                     
-                    # So de campana metàl·lica amb harmònics i caiguda
+                    # Campana harmònica amb caiguda suau
                     sound_wave = (
                         0.60 * np.sin(2 * np.pi * freq * t_note) +
                         0.30 * np.sin(2 * np.pi * (freq * 2.01) * t_note) +
                         0.10 * np.sin(2 * np.pi * (freq * 3.00) * t_note)
-                    ) * np.exp(-3.5 * t_note)
+                    ) * np.exp(-2.0 * t_note)
                     
-                    audio[hit_sample : hit_sample + note_len] += sound_wave * 0.45
+                    audio[hit_sample : hit_sample + note_len] += sound_wave * 0.42
 
             prev_z = z_curr
             prev_vel = vel
 
-    # Compressió suau per evitar distorsió quan sonen totes les boles a la vegada a l'inici
-    audio = np.tanh(audio * 1.4)
+    # Compressió suau
+    audio = np.tanh(audio * 1.35)
     max_amp = np.max(np.abs(audio))
     if max_amp > 0:
         audio = (audio / max_amp) * 31500
@@ -138,7 +138,7 @@ def render_chunk():
     start_frame = chunk_idx * frames_per_chunk + 1
     end_frame = min(TOTAL_FRAMES, (chunk_idx + 1) * frames_per_chunk)
 
-    print(f"🎬 Runner #{chunk_idx}: processant fotogrames {start_frame} a {end_frame}...")
+    print(f"🎬 Runner #{chunk_idx}: fotogrames {start_frame} a {end_frame} ({end_frame - start_frame + 1} frames)...")
     os.makedirs(FRAMES_DIR, exist_ok=True)
 
     bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -163,7 +163,7 @@ def render_chunk():
     scene.render.image_settings.file_format = 'PNG'
     scene.render.image_settings.color_mode = 'RGB'
 
-    # Càmera angular elevada
+    # Càmera
     cam_data = bpy.data.cameras.new("Camera")
     cam = bpy.data.objects.new("Camera", cam_data)
     scene.collection.objects.link(cam)
@@ -171,7 +171,7 @@ def render_chunk():
     cam.location = (0, -10.2, 7.8)
     cam.rotation_euler = (math.radians(54), 0, 0)
 
-    # Llums (Principal i rebliment lateral)
+    # Llums
     light_data = bpy.data.lights.new(name="MainLight", type='AREA')
     light_data.energy = 500
     light_data.size = 9.0
@@ -179,23 +179,20 @@ def render_chunk():
     light.location = (0, -1.0, 9.0)
     scene.collection.objects.link(light)
 
-    # 1. MATERIALS
-    # Boles: Verd maragda brillant amb metall
+    # Materials
     mat_sphere = bpy.data.materials.new("SphereMat")
     bsdf_s = mat_sphere.node_tree.nodes.get("Principled BSDF")
     bsdf_s.inputs["Base Color"].default_value = (0.05, 0.90, 0.45, 1.0)
     bsdf_s.inputs["Metallic"].default_value = 0.85
     bsdf_s.inputs["Roughness"].default_value = 0.12
 
-    # Terra/Pedestal: Base fosca visible amb bisell de contrast
     mat_floor = bpy.data.materials.new("FloorMat")
     bsdf_f = mat_floor.node_tree.nodes.get("Principled BSDF")
     bsdf_f.inputs["Base Color"].default_value = (0.08, 0.10, 0.12, 1.0)
     bsdf_f.inputs["Metallic"].default_value = 0.30
     bsdf_f.inputs["Roughness"].default_value = 0.35
 
-    # 2. CREACIÓ DEL TERRA (EL PEDESTAL DEL VÍDEO)
-    # Col·locat exactament a z = -BALL_RADIUS perquè les boles toquin la superfície en z=0
+    # Pedestal / Terra rígid visible
     bpy.ops.mesh.primitive_cylinder_add(
         vertices=64,
         radius=R_MAX + 0.45,
@@ -205,7 +202,6 @@ def render_chunk():
     floor_obj = bpy.context.active_object
     floor_obj.data.materials.append(mat_floor)
 
-    # Anell de contorn estètic al terra
     bpy.ops.mesh.primitive_torus_add(
         major_radius=R_MAX + 0.45,
         minor_radius=0.04,
@@ -216,17 +212,15 @@ def render_chunk():
     ring_border = bpy.context.active_object
     ring_border.data.materials.append(mat_sphere)
 
-    # 3. GENERACIÓ DELS ANELLS CONCÈNTRICS DE BOLES
+    # Anells concèntrics
     ring_radii = np.linspace(R_MIN, R_MAX, NUM_RINGS)
     all_x = []
     all_y = []
     ball_ring_indices = []
 
     for idx, r in enumerate(ring_radii):
-        # Nombre de boles proporcional al perímetre de l'anell
         num_balls = max(6, int(round((2.0 * math.pi * r) / (BALL_RADIUS * 2.3))))
         angles = np.linspace(0, 2.0 * math.pi, num_balls, endpoint=False)
-        
         for a in angles:
             all_x.append(r * math.cos(a))
             all_y.append(r * math.sin(a))
@@ -237,7 +231,6 @@ def render_chunk():
     all_x = np.array(all_x, dtype=np.float32)
     all_y = np.array(all_y, dtype=np.float32)
 
-    # Malla base per instanciació
     base_mesh = bpy.data.meshes.new("ConcentricBallsMesh")
     spiral_obj = bpy.data.objects.new("ConcentricSystem", base_mesh)
     scene.collection.objects.link(spiral_obj)
@@ -252,25 +245,22 @@ def render_chunk():
     base_mesh.from_pydata(initial_verts.tolist(), [], [])
     base_mesh.update()
 
-    # Precalcular altures per anell per a cada fotograma del chunk
+    # Bucle del chunk
     for frame in range(start_frame, end_frame + 1):
         scene.frame_set(frame)
         t = (frame - 1) / FPS
 
-        # Altura de cadascun dels 16 anells en aquest instant exacte
         ring_z_values = np.array([get_ring_height(i, t) for i in range(NUM_RINGS)], dtype=np.float32)
-        
-        # Mapejar a cada bola segons a quin anell pertany
         balls_z = ring_z_values[ball_ring_indices]
 
-        # Actualització directa a memòria
         coords = np.column_stack((all_x, all_y, balls_z)).astype(np.float32).ravel()
         base_mesh.vertices.foreach_set("co", coords)
         base_mesh.update()
 
         scene.render.filepath = os.path.join(FRAMES_DIR, f"frame_{frame:04d}.png")
         bpy.ops.render.render(write_still=True)
-        print(f"  [Chunk {chunk_idx}] Frame {frame}/{TOTAL_FRAMES} OK.")
+        if frame % 10 == 0 or frame == end_frame:
+            print(f"  [Chunk {chunk_idx}] Frame {frame}/{TOTAL_FRAMES} OK.")
 
 
 # ==============================================================================
@@ -284,10 +274,10 @@ def send_telegram_video(video_path):
     print("📲 TEST_MODE=True: Enviant vídeo a Telegram...")
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVideo"
     caption = (
-        "✨ <b>BOUNCELAB 3D - ANELLS CONCÈNTRICS</b>\n\n"
-        "🟢 <b>Moviment:</b> Bota en pla a l'inici i es converteix en ona concèntrica\n"
-        "🔘 <b>Terra:</b> Pedestal rígid integrat amb contacte visual exacte\n"
-        "🔔 <b>Àudio:</b> Cada fila d'anell dispara la seva nota quan toca el terra (acord uníson inicial -> cascada arpegiada)"
+        "✨ <b>BOUNCELAB 3D - MOVIMENT LENT I FLOTANT (16s)</b>\n\n"
+        "🧘 <b>Ritme:</b> Animació pausada (0.65 Hz) amb transició suau de pla a ona\n"
+        "🔘 <b>Terra:</b> Pedestal rígid integrat a z=0\n"
+        "🔔 <b>Àudio:</b> Campanes harmòniques amb ressonància profunda a cada xoc de fila"
     )
 
     try:
@@ -315,7 +305,7 @@ def send_telegram_video(video_path):
 # 🎬 4. ACOBLAMENT FINAL (FFMPEG)
 # ==============================================================================
 def assemble_final_video():
-    print("⚡ Unint els fotogrames i sincronitzant impactes...")
+    print("⚡ Unint els 480 fotogrames descarregats...")
     duration = TOTAL_FRAMES / FPS
     generate_chimes_audio(duration, TEMP_AUDIO)
 
