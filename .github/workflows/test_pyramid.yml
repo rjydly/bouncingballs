@@ -9,7 +9,7 @@ jobs:
   # -------------------------------------------------------------
   simulate_physics:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Baixar repositori
@@ -40,12 +40,12 @@ jobs:
           retention-days: 1
 
   # -------------------------------------------------------------
-  # FASE 2: 19 MÀQUINES RENDERITZEN ~44 FOTOGRAMES CADASCUNA
+  # FASE 2: 19 MÀQUINES RENDERITZEN (AMB TEMPS DE SOBRA)
   # -------------------------------------------------------------
   render_chunk:
     needs: simulate_physics
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25  # 👈 Pujat a 25 minuts perquè cap màquina es talli mai
     strategy:
       fail-fast: false
       matrix:
@@ -80,7 +80,7 @@ jobs:
   assemble_and_send:
     needs: render_chunk
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
 
     steps:
       - name: Baixar repositori
