@@ -26,18 +26,18 @@ HEIGHT = 1280
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-# Geometria i dinàmica
+# Geometria i dinàmica física real
 NUM_RINGS = 16
 R_MIN = 0.30
 R_MAX = 3.25
 BALL_RADIUS = 0.062
 BOUNCE_HEIGHT = 1.45
 
-# Cada bot complet (pujar i tocar el terra) dura exactament 1.6 segons
-BOUNCE_DURATION = 1.6
+# Durada del 1r bot (1.7 segons = bot lent i elegant)
+T_FIRST_BOUNCE = 1.70
 
 # ==============================================================================
-# 🎨 PALETA DE COLORS ALEATORIS DETERMINISTA (IDENTICA A TOTS ELS RUNNERS)
+# 🎨 PALETA DE COLORS ALEATORIS DETERMINISTA
 # ==============================================================================
 COLOR_SEED = 2026
 rng = np.random.RandomState(COLOR_SEED)
@@ -65,29 +65,28 @@ def get_ring_color(ring_idx, phase):
 
 
 # ==============================================================================
-# 📐 CÀLCUL MATEMÀTIC DEL MOVIMENT (ONDULACIÓ IMMEDIATA AL 2n BOT)
+# 📐 FÍSICA REAL: EL CENTRE SIMPLEMENT BOTA MÉS RÀPID A PARTIR DEL 2n BOT
 # ==============================================================================
 def get_ring_phase_and_height(ring_idx, t):
-    u = ring_idx / (NUM_RINGS - 1)  # 0.0 (centre) a 1.0 (vora)
+    u = ring_idx / (NUM_RINGS - 1)  # 0.0 (centre) a 1.0 (vora exterior)
     
-    # El 1r bot acaba exactament a t = BOUNCE_DURATION (1.6s)
-    if t < BOUNCE_DURATION:
-        wave_dispersion = 0.0
+    if t <= T_FIRST_BOUNCE:
+        # 1r BOT: Totes les boles són 100% idèntiques en altura i velocitat
+        phase = (math.pi / T_FIRST_BOUNCE) * t
     else:
-        # A partir del 2n bot (t >= 1.6s) la dispersió entra ràpidament
-        # Al 2n bot ja es veu clarament la diferència d'alçades
-        progress = min(1.0, (t - BOUNCE_DURATION) / 2.2)
-        progress_eased = progress * progress * (3.0 - 2.0 * progress)
-        wave_dispersion = progress_eased * math.pi * 1.5
+        # A PARTIR DEL 2n BOT: El centre és un 14% més ràpid de forma natural
+        # Simplement completa el cicle abans i baixa cap al terra més ràpid!
+        speed_factor = 1.0 + 0.14 * (1.0 - u)
+        tau = t - T_FIRST_BOUNCE
+        phase = math.pi + (math.pi / T_FIRST_BOUNCE) * tau * speed_factor
 
-    # Fase matemàtica exacte on cada període complet de bot dura BOUNCE_DURATION
-    phase = (math.pi / BOUNCE_DURATION) * t - (u * wave_dispersion)
+    # Trajectòria de bot suau i natural sense deformacions estranyes
     z = BOUNCE_HEIGHT * (abs(math.sin(phase)) ** 1.30)
     return phase, z
 
 
 # ==============================================================================
-# 🔔 1. SÍNTESI D'ÀUDIO PER IMPACTES
+# 🔔 1. SÍNTESI D'ÀUDIO SINCRONITZAT AMB ELS XOCS
 # ==============================================================================
 def generate_chimes_audio(duration_sec, output_wav):
     print("🎵 Sintetitzant àudio sincronitzat amb els impactes...")
@@ -183,20 +182,20 @@ def render_chunk():
     scene.render.image_settings.file_format = 'PNG'
     scene.render.image_settings.color_mode = 'RGB'
 
-    # CÀMERA SIGNIFICATIVAMENT MÉS LLUNY: Pedestal complet amb marge ampli
+    # CÀMERA MÉS LLUNY: Marge ampli i net al voltant de tot el pedestal
     cam_data = bpy.data.cameras.new("Camera")
     cam = bpy.data.objects.new("Camera", cam_data)
     scene.collection.objects.link(cam)
     scene.camera = cam
-    cam.location = (0, -17.5, 13.0)
-    cam.rotation_euler = (math.radians(53), 0, 0)
+    cam.location = (0, -18.5, 14.0)
+    cam.rotation_euler = (math.radians(52.5), 0, 0)
 
     # Llums
     light_data = bpy.data.lights.new(name="MainLight", type='AREA')
-    light_data.energy = 650
-    light_data.size = 12.0
+    light_data.energy = 700
+    light_data.size = 13.0
     light = bpy.data.objects.new("MainLight", light_data)
-    light.location = (0, -1.0, 13.0)
+    light.location = (0, -1.0, 14.0)
     scene.collection.objects.link(light)
 
     # Materials del terra
@@ -279,7 +278,7 @@ def render_chunk():
             ring_i = sys_data["idx"]
             phase, z = get_ring_phase_and_height(ring_i, t)
             
-            # Actualitzar coordenades z
+            # Actualitzar coordenades z naturals
             coords = np.column_stack((
                 sys_data["rx"],
                 sys_data["ry"],
@@ -288,7 +287,7 @@ def render_chunk():
             sys_data["mesh"].vertices.foreach_set("co", coords)
             sys_data["mesh"].update()
 
-            # Actualitzar color amb desfasament concèntric
+            # Actualitzar color: el centre canvia abans en tocar el terra més ràpid
             color = get_ring_color(ring_i, phase)
             sys_data["bsdf"].inputs["Base Color"].default_value = color
 
@@ -309,10 +308,10 @@ def send_telegram_video(video_path):
     print("📲 TEST_MODE=True: Enviant vídeo a Telegram...")
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVideo"
     caption = (
-        "✨ <b>BOUNCELAB 3D - CÀMERA AMPLA I DISPERSIÓ RÀPIDA</b>\n\n"
-        "🔭 <b>Càmera:</b> Enquadrament panoràmic amb ampli marge perimetral\n"
-        "⚡ <b>Transició:</b> 1r bot pla a l'uníson -> 2n bot ja es veu i se sent clarament l'ona\n"
-        "🌈 <b>Colors:</b> Onades de color concèntriques que s'escampen des del centre"
+        "✨ <b>BOUNCELAB 3D - MOVIMENT NATURAL I CÀMERA AMPLA</b>\n\n"
+        "🔭 <b>Enquadrament:</b> Pedestal complet amb ampli marge a tots els costats\n"
+        "⚡ <b>Dinàmica:</b> 1r bot 100% pla a l'uníson -> Al 2n bot el centre simplement baixa més àgil cap al terra de manera neta i harmònica\n"
+        "🌈 <b>Colors:</b> Onades de color que flueixen des del centre"
     )
 
     try:
