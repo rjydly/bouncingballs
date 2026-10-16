@@ -1,11 +1,11 @@
-name: Test 3D Spiral Video (15x Parallel)
+name: Test 3D Spiral Video (19x Parallel)
 
 on:
   workflow_dispatch:
 
 jobs:
   # -------------------------------------------------------------
-  # FASE 1: 15 MÀQUINES RENDERITZANT 12 FOTOGRAMES CADASCUNA
+  # FASE 1: 19 MÀQUINES RENDERITZANT ~47 FOTOGRAMES CADASCUNA
   # -------------------------------------------------------------
   render_chunk:
     runs-on: ubuntu-latest
@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        chunk: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+        chunk: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
 
     steps:
       - name: Baixar repositori
@@ -33,7 +33,7 @@ jobs:
       - name: Renderitzar tall de fotogrames (Chunk ${{ matrix.chunk }})
         env:
           CHUNK_INDEX: ${{ matrix.chunk }}
-          TOTAL_CHUNKS: 15
+          TOTAL_CHUNKS: 19
         run: |
           export PYTHONPATH=$(python -c "import site; print(site.getsitepackages()[0])"):$PYTHONPATH
           blender -b -P generate_spiral.py
@@ -46,7 +46,7 @@ jobs:
           retention-days: 1
 
   # -------------------------------------------------------------
-  # FASE 2: UNIÓ DE FOTOGRAMES, ÀUDIO I TELEGRAM (15 SEGONS)
+  # FASE 2: ACOBLAMENT FINAL, ÀUDIO I TELEGRAM (15 SEGONS)
   # -------------------------------------------------------------
   assemble_and_send:
     needs: render_chunk
@@ -68,14 +68,14 @@ jobs:
       - name: Instal·lar dependències
         run: pip install requests numpy
 
-      - name: Descarregar tots els talls renderitzats
+      - name: Descarregar tots els talls renderitzats (19 chunks)
         uses: actions/download-artifact@v4
         with:
           pattern: frames-chunk-*
           merge-multiple: true
           path: all_frames
 
-      - name: Acoblar vídeo final i enviar a Telegram
+      - name: Acoblar vídeo final de 30s i enviar a Telegram
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
