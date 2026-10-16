@@ -1,12 +1,12 @@
 name: Test 3D Spiral Video
 
 on:
-  workflow_dispatch: # Execució manual amb un sol clic
+  workflow_dispatch:
 
 jobs:
   render_spiral_test:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
 
     steps:
       - name: Baixar repositori
@@ -35,7 +35,7 @@ jobs:
           export PYTHONPATH=$(python -c "import site; print(site.getsitepackages()[0])"):$PYTHONPATH
           blender -b -P generate_spiral.py
 
-      - name: Desar vídeo com a Artifact (per si el vols descarregar de GitHub)
+      - name: Desar vídeo com a Artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
