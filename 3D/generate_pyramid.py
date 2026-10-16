@@ -19,23 +19,22 @@ TEMP_AUDIO = "temp_impacts.wav"
 BAKED_BLEND = "pyramid_baked.blend"
 
 FPS = 30
-TOTAL_FRAMES = 840  # 28 segons exactes (840 / 19 màquines = ~44 frames per màquina)
+TOTAL_FRAMES = 840  # 28 segons exactes
 WIDTH = 720
 HEIGHT = 1280
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-# Paràmetres de la piràmide
-PYRAMID_LAYERS = 14  # 1.015 cubs individuals
+PYRAMID_LAYERS = 14  # 1.015 cubs sòlids
 CUBE_SIZE = 0.20
 
-# Moments d'impacte dels 4 pesos (en fotogrames)
+# Configuració dels 4 pesos i els seus intervals
 DROPS_CONFIG = [
-    {"label": "1kg",    "mass": 1.0,    "radius": 0.22, "start_frame": 1,   "drop_frame": 10,  "hit_frame": 30},
-    {"label": "10kg",   "mass": 10.0,   "radius": 0.36, "start_frame": 181, "drop_frame": 190, "hit_frame": 210},
-    {"label": "100kg",  "mass": 100.0,  "radius": 0.58, "start_frame": 421, "drop_frame": 430, "hit_frame": 450},
-    {"label": "1000kg", "mass": 1000.0, "radius": 0.88, "start_frame": 661, "drop_frame": 670, "hit_frame": 690},
+    {"label": "1kg",    "mass": 1.0,    "radius": 0.22, "start_frame": 1,   "drop_frame": 10,  "end_frame": 180},
+    {"label": "10kg",   "mass": 10.0,   "radius": 0.36, "start_frame": 181, "drop_frame": 190, "end_frame": 420},
+    {"label": "100kg",  "mass": 100.0,  "radius": 0.58, "start_frame": 421, "drop_frame": 430, "end_frame": 660},
+    {"label": "1000kg", "mass": 1000.0, "radius": 0.88, "start_frame": 661, "drop_frame": 670, "end_frame": 840},
 ]
 
 
@@ -43,17 +42,16 @@ DROPS_CONFIG = [
 # 💥 1. SÍNTESI D'ÀUDIO PROCEDURAL DELS 4 IMPACTES
 # ==============================================================================
 def generate_impacts_audio(duration_sec, output_wav):
-    print("🎵 Sintetitzant sons d'impacte contundents per a cada pes...")
+    print("🎵 Sintetitzant sons d'impacte contundents...")
     SAMPLE_RATE = 44100
     n_samples = int(duration_sec * SAMPLE_RATE)
     audio = np.zeros(n_samples, dtype=np.float32)
 
-    # Definició dels perfils sonors dels 4 impactes
     impact_profiles = [
-        {"time": 1.0,  "sub_freq": 110.0, "decay": 12.0, "noise_amt": 0.35, "vol": 0.45},  # 1kg: cop sec metàl·lic
-        {"time": 7.0,  "sub_freq": 75.0,  "decay": 6.0,  "noise_amt": 0.55, "vol": 0.70},  # 10kg: xoc de pedra pesada
-        {"time": 15.0, "sub_freq": 52.0,  "decay": 3.5,  "noise_amt": 0.75, "vol": 0.90},  # 100kg: explosió de runes
-        {"time": 23.0, "sub_freq": 38.0,  "decay": 2.2,  "noise_amt": 0.90, "vol": 1.10},  # 1000kg: terrabastall sísmic
+        {"time": 1.0,  "sub_freq": 110.0, "decay": 12.0, "noise_amt": 0.35, "vol": 0.45},
+        {"time": 7.0,  "sub_freq": 75.0,  "decay": 6.0,  "noise_amt": 0.55, "vol": 0.70},
+        {"time": 15.0, "sub_freq": 52.0,  "decay": 3.5,  "noise_amt": 0.75, "vol": 0.90},
+        {"time": 23.0, "sub_freq": 38.0,  "decay": 2.2,  "noise_amt": 0.90, "vol": 1.10},
     ]
 
     for p in impact_profiles:
@@ -62,7 +60,6 @@ def generate_impacts_audio(duration_sec, output_wav):
         n_note = int(dur * SAMPLE_RATE)
         t = np.linspace(0, dur, n_note, False)
 
-        # Cop greu de sub-greus + terrabastall de runes
         sub_boom = np.sin(2 * np.pi * p["sub_freq"] * t) * np.exp(-p["decay"] * t)
         noise = (np.random.rand(n_note) * 2.0 - 1.0) * np.exp(-p["decay"] * 0.75 * t)
         
@@ -83,12 +80,12 @@ def generate_impacts_audio(duration_sec, output_wav):
 
 
 # ==============================================================================
-# 🏗️ 2. SIMULACIÓ FÍSICA I CONGELACIÓ EN KEYFRAMES (PAS 1)
+# 🏗️ 2. SIMULACIÓ FÍSICA I CONGELACIÓ (HEADLESS)
 # ==============================================================================
 def simulate_physics():
     import bpy
 
-    print("🔨 Construint piràmide i calculant simulació física (Bullet Engine)...")
+    print("🔨 Construint piràmide i preparant Bullet Engine...")
     bpy.ops.wm.read_factory_settings(use_empty=True)
     scene = bpy.context.scene
 
@@ -96,7 +93,6 @@ def simulate_physics():
     scene.frame_end = TOTAL_FRAMES
     scene.render.fps = FPS
 
-    # Crear el món físic
     if not scene.rigidbody_world:
         bpy.ops.rigidbody.world_add()
     scene.rigidbody_world.point_cache.frame_start = 1
@@ -107,7 +103,7 @@ def simulate_physics():
     # Materials
     mat_block = bpy.data.materials.new("BlockMat")
     bsdf_b = mat_block.node_tree.nodes.get("Principled BSDF")
-    bsdf_b.inputs["Base Color"].default_value = (0.50, 0.32, 0.17, 1.0)  # Terracota càlida
+    bsdf_b.inputs["Base Color"].default_value = (0.50, 0.32, 0.17, 1.0)
     bsdf_b.inputs["Roughness"].default_value = 0.75
 
     mat_chrome = bpy.data.materials.new("ChromeBallMat")
@@ -126,9 +122,9 @@ def simulate_physics():
     bsdf_t.inputs["Base Color"].default_value = (1.0, 1.0, 1.0, 1.0)
     if "Emission Color" in bsdf_t.inputs:
         bsdf_t.inputs["Emission Color"].default_value = (1.0, 1.0, 1.0, 1.0)
-        bsdf_t.inputs["Emission Strength"].default_value = 1.2
+        bsdf_t.inputs["Emission Strength"].default_value = 1.5
 
-    # 1. Terra rígid passiu
+    # 1. Terra passiu
     bpy.ops.mesh.primitive_box_add(size=1.0, location=(0, 0, -0.5))
     ground = bpy.context.active_object
     ground.scale = (20.0, 20.0, 1.0)
@@ -138,10 +134,8 @@ def simulate_physics():
     ground.rigid_body.collision_shape = 'BOX'
     ground.rigid_body.friction = 0.8
 
-    # 2. Construcció esglaonada de la piràmide
-    total_blocks = 0
+    # 2. Piràmide de cubs
     active_cubes = []
-
     for layer_k in range(PYRAMID_LAYERS):
         num_per_side = layer_k + 1
         z = (PYRAMID_LAYERS - 1 - layer_k) * CUBE_SIZE + (CUBE_SIZE / 2.0)
@@ -159,18 +153,16 @@ def simulate_physics():
                 bpy.ops.rigidbody.object_add()
                 cube.rigid_body.type = 'ACTIVE'
                 cube.rigid_body.collision_shape = 'BOX'
-                cube.rigid_body.mass = 0.4
+                cube.rigid_body.mass = 0.40
                 cube.rigid_body.friction = 0.70
                 cube.rigid_body.use_deactivation = True
-                
                 active_cubes.append(cube)
-                total_blocks += 1
 
-    print(f"🧱 Piràmide construïda amb èxit: {total_blocks} blocs sòlids.")
+    print(f"🧱 Piràmide construïda amb èxit: {len(active_cubes)} blocs sòlids.")
 
     # 3. Les 4 boles pesades amb activació seqüencial
+    ball_objects = []
     for drop in DROPS_CONFIG:
-        # Altura de llançament sobre l'àpex
         drop_z = (PYRAMID_LAYERS * CUBE_SIZE) + 2.5 + (drop["radius"] * 1.5)
         
         bpy.ops.mesh.primitive_uv_sphere_add(
@@ -190,23 +182,27 @@ def simulate_physics():
         ball.rigid_body.mass = drop["mass"]
         ball.rigid_body.friction = 0.4
         
-        # S'activa físicament just al seu drop_frame
         f_drop = drop["drop_frame"]
         
+        # Animació correcta del flag kinematic
         ball.rigid_body.kinematic = True
-        ball.rigid_body.keyframe_insert("kinematic", frame=1)
-        ball.rigid_body.keyframe_insert("kinematic", frame=f_drop - 1)
+        ball.keyframe_insert(data_path="rigid_body.kinematic", frame=1)
+        if f_drop > 1:
+            ball.keyframe_insert(data_path="rigid_body.kinematic", frame=f_drop - 1)
         ball.rigid_body.kinematic = False
-        ball.rigid_body.keyframe_insert("kinematic", frame=f_drop)
+        ball.keyframe_insert(data_path="rigid_body.kinematic", frame=f_drop)
 
-        # Visibilitat (només apareix a partir del seu torn)
+        # Visibilitat de la bola
         ball.hide_render = True
-        ball.keyframe_insert("hide_render", frame=1)
-        ball.keyframe_insert("hide_render", frame=f_drop - 1)
+        ball.keyframe_insert(data_path="hide_render", frame=1)
+        if f_drop > 1:
+            ball.keyframe_insert(data_path="hide_render", frame=f_drop - 1)
         ball.hide_render = False
-        ball.keyframe_insert("hide_render", frame=f_drop)
+        ball.keyframe_insert(data_path="hide_render", frame=f_drop)
 
-        # 4. Text 3D corresponent
+        ball_objects.append(ball)
+
+        # 4. Text 3D
         bpy.ops.object.text_add(location=(0, -0.6, 5.8))
         txt_obj = bpy.context.active_object
         txt_obj.name = f"Text_{drop['label']}"
@@ -216,17 +212,19 @@ def simulate_physics():
         txt_obj.data.materials.append(mat_text)
         txt_obj.rotation_euler = (math.radians(90), 0, 0)
 
-        # El text només és visible durant la seva franja
         f_start = drop["start_frame"]
-        f_end = drop["start_frame"] + 180 if drop["label"] == "1kg" else (drop["start_frame"] + 240 if drop["label"] != "1000kg" else TOTAL_FRAMES)
+        f_end = drop["end_frame"]
         
         txt_obj.hide_render = True
-        txt_obj.keyframe_insert("hide_render", frame=1)
-        txt_obj.keyframe_insert("hide_render", frame=f_start - 1)
+        txt_obj.keyframe_insert(data_path="hide_render", frame=1)
+        if f_start > 1:
+            txt_obj.keyframe_insert(data_path="hide_render", frame=f_start - 1)
         txt_obj.hide_render = False
-        txt_obj.keyframe_insert("hide_render", frame=f_start)
-        txt_obj.hide_render = True
-        txt_obj.keyframe_insert("hide_render", frame=f_end)
+        txt_obj.keyframe_insert(data_path="hide_render", frame=f_start)
+        txt_obj.keyframe_insert(data_path="hide_render", frame=f_end)
+        if f_end < TOTAL_FRAMES:
+            txt_obj.hide_render = True
+            txt_obj.keyframe_insert(data_path="hide_render", frame=f_end + 1)
 
     # 5. Càmera i Il·luminació
     cam_data = bpy.data.cameras.new("Camera")
@@ -242,24 +240,44 @@ def simulate_physics():
     light.rotation_euler = (math.radians(45), math.radians(25), math.radians(-30))
     scene.collection.objects.link(light)
 
-    # 6. CONGELAR TOTA LA FÍSICA EN KEYFRAMES (Bake absolut)
-    print("⏳ Calculant xocs i congelant coordenades fotograma a fotograma...")
-    bpy.ops.object.select_all(action='DESELECT')
-    for obj in bpy.data.objects:
-        if obj.rigid_body and obj.rigid_body.type == 'ACTIVE':
-            obj.select_set(True)
+    # 6. SIMULACIÓ BULLET I EXTRACCIÓ A KEYFRAMES (100% HEADLESS)
+    print("⏳ Executant simulació física en memòria...")
+    bpy.ops.wm.save_as_mainfile(filepath=BAKED_BLEND)
+    bpy.ops.ptcache.bake_all(bake=True)
 
-    bpy.context.view_layer.objects.active = active_cubes[0]
-    bpy.ops.rigidbody.bake_to_keyframes(frame_start=1, frame_end=TOTAL_FRAMES, step=1)
+    print("⚡ Convertint les posicions simulades a keyframes permanents...")
+    all_sim_objects = active_cubes + ball_objects
+    init_states = {obj.name: (obj.location.copy(), obj.rotation_euler.copy()) for obj in all_sim_objects}
+    has_moved = {obj.name: False for obj in all_sim_objects}
 
-    # Netejar el motor de simulació per convertir l'escena en geometria purament animada
-    bpy.ops.rigidbody.objects_remove()
+    for f in range(1, TOTAL_FRAMES + 1):
+        scene.frame_set(f)
+        for obj in all_sim_objects:
+            cur_loc = obj.matrix_world.translation.copy()
+            cur_rot = obj.matrix_world.to_euler()
+
+            if not has_moved[obj.name]:
+                diff = (cur_loc - init_states[obj.name][0]).length
+                if diff > 0.002:
+                    has_moved[obj.name] = True
+                    if f > 1:
+                        obj.location = init_states[obj.name][0]
+                        obj.rotation_euler = init_states[obj.name][1]
+                        obj.keyframe_insert(data_path="location", frame=f - 1)
+                        obj.keyframe_insert(data_path="rotation_euler", frame=f - 1)
+
+            if has_moved[obj.name]:
+                obj.location = cur_loc
+                obj.rotation_euler = cur_rot
+                obj.keyframe_insert(data_path="location", frame=f)
+                obj.keyframe_insert(data_path="rotation_euler", frame=f)
+
+    # Retirem el motor físic perquè el fitxer sigui una animació pura independent
     bpy.ops.rigidbody.world_remove()
 
-    # Desar l'escena congelada
     print(f"💾 Desant escena congelada a {BAKED_BLEND}...")
     bpy.ops.wm.save_as_mainfile(filepath=BAKED_BLEND, compress=True)
-    print("✅ Simulació completada amb èxit!")
+    print("✅ Simulació completada i congelada amb èxit!")
 
 
 # ==============================================================================
@@ -280,7 +298,6 @@ def render_chunk(chunk_idx, total_chunks):
     scene.render.resolution_x = WIDTH
     scene.render.resolution_y = HEIGHT
 
-    # Optimitzacions CPU
     scene.render.engine = 'CYCLES'
     scene.cycles.device = 'CPU'
     scene.cycles.samples = 4
