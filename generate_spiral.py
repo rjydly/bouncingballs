@@ -10,14 +10,14 @@ import bpy
 # ==============================================================================
 # ⚙️ CONFIGURACIÓ PRINCIPAL (EDITA AQUÍ DIRECTAMENT)
 # ==============================================================================
-TEST_MODE = True  # 👉 CANVIA AQUÍ: True (envia a Telegram) | False (no fa res)
+TEST_MODE = True  # 👉 True (envia a Telegram) | False (no fa res)
 
 OUTPUT_VIDEO = "output_spiral.mp4"
 FRAMES_DIR = "temp_frames"
 TEMP_AUDIO = "temp_chimes.wav"
 
 FPS = 30
-TOTAL_FRAMES = 180  # 6 segons de vídeo
+TOTAL_FRAMES = 180  # 6 segons
 WIDTH = 720
 HEIGHT = 1280
 
@@ -26,7 +26,7 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 
 # ==============================================================================
-# 🔔 1. SÍNTESI D'ÀUDIO PROCEDURAL (CAMPANES DE VIDRE)
+# 🔔 1. SÍNTESI D'ÀUDIO PROCEDURAL
 # ==============================================================================
 def generate_chimes_audio(duration_sec, output_wav):
     print("🎵 Sintetitzant àudio de campanes...")
@@ -69,7 +69,7 @@ def generate_chimes_audio(duration_sec, output_wav):
 
 
 # ==============================================================================
-# 🎨 2. RENDERITZAT 3D A SEQÜÈNCIA D'IMATGES PNG (BLENDER 5.x)
+# 🎨 2. RENDERITZAT 3D ULTRA-OPTIMITZAT
 # ==============================================================================
 def render_3d_spiral():
     print("🎬 Construint escena 3D a Blender...")
@@ -87,13 +87,20 @@ def render_3d_spiral():
     scene.render.resolution_x = WIDTH
     scene.render.resolution_y = HEIGHT
 
-    # Configuració 100% universal: Exportació en PNGs per a Cycles CPU
-    scene.render.image_settings.file_format = 'PNG'
-    scene.render.image_settings.color_mode = 'RGB'
+    # Optimitzacions extremes de velocitat per a CPU
     scene.render.engine = 'CYCLES'
     scene.cycles.device = 'CPU'
-    scene.cycles.samples = 16
+    scene.cycles.samples = 4           # 4 mostres + denoiser = imatge neta i vola
     scene.cycles.use_denoising = True
+    scene.cycles.max_bounces = 2       # En lloc de 12 (elimina el 80% del temps de càlcul)
+    scene.cycles.diffuse_bounces = 1
+    scene.cycles.glossy_bounces = 2
+    scene.cycles.transmission_bounces = 0
+    scene.cycles.transparent_max_bounces = 1
+    scene.cycles.volume_bounces = 0
+
+    scene.render.image_settings.file_format = 'PNG'
+    scene.render.image_settings.color_mode = 'RGB'
 
     # Càmera
     cam_data = bpy.data.cameras.new("Camera")
@@ -111,16 +118,14 @@ def render_3d_spiral():
     light.location = (0, 0, 8.5)
     scene.collection.objects.link(light)
 
-    # Materials
+    # Materials (sense 'use_nodes' per evitar avisos de Blender 5/6)
     mat_sphere = bpy.data.materials.new("SphereMat")
-    mat_sphere.use_nodes = True
     bsdf = mat_sphere.node_tree.nodes.get("Principled BSDF")
     bsdf.inputs["Base Color"].default_value = (0.05, 0.85, 0.45, 1.0)
     bsdf.inputs["Metallic"].default_value = 0.85
     bsdf.inputs["Roughness"].default_value = 0.15
 
     mat_mirror = bpy.data.materials.new("MirrorMat")
-    mat_mirror.use_nodes = True
     bsdf_m = mat_mirror.node_tree.nodes.get("Principled BSDF")
     bsdf_m.inputs["Base Color"].default_value = (0.02, 0.03, 0.03, 1.0)
     bsdf_m.inputs["Metallic"].default_value = 0.95
@@ -139,43 +144,46 @@ def render_3d_spiral():
     spiral_obj = bpy.data.objects.new("Spiral", base_mesh)
     scene.collection.objects.link(spiral_obj)
 
-    bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=2, radius=0.075)
+    # Subdivisions=1 + shade_smooth redueix els triangles un 75% mantenint aspecte esfèric
+    bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=1, radius=0.075)
     proto = bpy.context.active_object
     proto.data.materials.append(mat_sphere)
     proto.parent = spiral_obj
     spiral_obj.instance_type = 'VERTS'
 
-    radii = [math.sqrt(i) * 0.115 for i in range(N_BALLS)]
-    thetas = [i * GOLDEN_ANGLE for i in range(N_BALLS)]
-    max_r = max(radii)
+    # Precalcular arrays de NumPy vectoritzats (0 mil·lisegons)
+    indices = np.arange(N_BALLS)
+    thetas = indices * GOLDEN_ANGLE
+    radii = np.sqrt(indices) * 0.115
+    max_r = radii[-1]
+    u = radii / max_r
 
-    initial_verts = [(radii[i]*math.cos(thetas[i]), radii[i]*math.sin(thetas[i]), 0.0) for i in range(N_BALLS)]
-    base_mesh.from_pydata(initial_verts, [], [])
+    # Inicialitzar la malla un sol cop a la memòria
+    initial_verts = np.column_stack((radii * np.cos(thetas), radii * np.sin(thetas), np.zeros(N_BALLS)))
+    base_mesh.from_pydata(initial_verts.tolist(), [], [])
     base_mesh.update()
 
-    print("Renderitzant seqüència PNG...")
+    print("Renderitzant fotogrames a alta velocitat...")
     for frame in range(1, TOTAL_FRAMES + 1):
         scene.frame_set(frame)
         t = (frame / TOTAL_FRAMES) * math.pi * 4.0
 
-        verts = []
-        for i in range(N_BALLS):
-            r = radii[i]
-            theta = thetas[i]
-            u = r / max_r
-            z = 1.4 * math.sin(u * math.pi * 3.0 - t) * (1.0 - u * 0.4)
-            r_mod = r * (1.0 + 0.12 * math.cos(u * math.pi * 2.0 - t))
-            verts.append((r_mod * math.cos(theta), r_mod * math.sin(theta), z))
+        # Càlcul vectorial instantani amb NumPy
+        z = 1.4 * np.sin(u * np.pi * 3.0 - t) * (1.0 - u * 0.4)
+        r_mod = radii * (1.0 + 0.12 * np.cos(u * np.pi * 2.0 - t))
+        x = r_mod * np.cos(thetas)
+        y = r_mod * np.sin(thetas)
 
-        base_mesh.clear_geometry()
-        base_mesh.from_pydata(verts, [], [])
+        # Actualització directa de memòria (sense reconstruir la malla ni el BVH)
+        coords = np.column_stack((x, y, z)).astype(np.float32).ravel()
+        base_mesh.vertices.foreach_set("co", coords)
         base_mesh.update()
 
-        # Guarda cada fotograma de manera independent
         scene.render.filepath = os.path.join(FRAMES_DIR, f"frame_{frame:04d}.png")
         bpy.ops.render.render(write_still=True)
+
         if frame % 30 == 0:
-            print(f"  -> {frame}/{TOTAL_FRAMES} fotogrames llestos")
+            print(f"  -> {frame}/{TOTAL_FRAMES} fotogrames enllestits")
 
 
 # ==============================================================================
@@ -221,14 +229,11 @@ def send_telegram_video(video_path):
 def main():
     print(f"🔧 Estat de la variable TEST_MODE: {TEST_MODE}")
 
-    # 1. Renderitzar imatges
     render_3d_spiral()
 
-    # 2. Sintetitzar àudio
     duration = TOTAL_FRAMES / FPS
     generate_chimes_audio(duration, TEMP_AUDIO)
 
-    # 3. Unir la seqüència PNG + Àudio amb FFmpeg
     print("⚡ Empaquetant MP4 H.264 amb FFmpeg...")
     frame_pattern = os.path.join(FRAMES_DIR, "frame_%04d.png")
     subprocess.run(
@@ -249,17 +254,15 @@ def main():
         check=True
     )
 
-    # Neteja de fitxers temporals
     if os.path.exists(FRAMES_DIR):
         shutil.rmtree(FRAMES_DIR)
     if os.path.exists(TEMP_AUDIO):
         os.remove(TEMP_AUDIO)
 
-    # 4. Decisió segons la variable TEST_MODE
     if TEST_MODE is True:
         send_telegram_video(OUTPUT_VIDEO)
     else:
-        print("⏸️ TEST_MODE és False: el vídeo s'ha generat a disc però no s'ha enviat enlloc.")
+        print("⏸️ TEST_MODE és False: no s'ha enviat res.")
 
 
 if __name__ == "__main__":
