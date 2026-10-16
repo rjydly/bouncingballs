@@ -124,10 +124,9 @@ def simulate_physics():
         bsdf_t.inputs["Emission Color"].default_value = (1.0, 1.0, 1.0, 1.0)
         bsdf_t.inputs["Emission Strength"].default_value = 1.5
 
-    # 1. Terra passiu
-    bpy.ops.mesh.primitive_box_add(size=1.0, location=(0, 0, -0.5))
+    # 1. Terra passiu rígid (Cub massiu de 20m amb cara superior plana a z = 0.0)
+    bpy.ops.mesh.primitive_cube_add(size=20.0, location=(0, 0, -10.0))
     ground = bpy.context.active_object
-    ground.scale = (20.0, 20.0, 1.0)
     ground.data.materials.append(mat_floor)
     bpy.ops.rigidbody.object_add()
     ground.rigid_body.type = 'PASSIVE'
@@ -241,36 +240,49 @@ def simulate_physics():
     scene.collection.objects.link(light)
 
     # 6. SIMULACIÓ BULLET I EXTRACCIÓ A KEYFRAMES (100% HEADLESS)
-    print("⏳ Executant simulació física en memòria...")
+    print("⏳ Executant simulació física Bullet pas a pas...")
     bpy.ops.wm.save_as_mainfile(filepath=BAKED_BLEND)
-    bpy.ops.ptcache.bake_all(bake=True)
+    try:
+        bpy.ops.ptcache.bake_all(bake=True)
+    except Exception as e:
+        print(f"ℹ️ Executant càlcul seqüencial directament ({e})")
 
     print("⚡ Convertint les posicions simulades a keyframes permanents...")
-    all_sim_objects = active_cubes + ball_objects
-    init_states = {obj.name: (obj.location.copy(), obj.rotation_euler.copy()) for obj in all_sim_objects}
-    has_moved = {obj.name: False for obj in all_sim_objects}
+    init_states = {cube.name: (cube.location.copy(), cube.rotation_euler.copy()) for cube in active_cubes}
+    has_moved = {cube.name: False for cube in active_cubes}
 
     for f in range(1, TOTAL_FRAMES + 1):
         scene.frame_set(f)
-        for obj in all_sim_objects:
-            cur_loc = obj.matrix_world.translation.copy()
-            cur_rot = obj.matrix_world.to_euler()
+        
+        # Boles: enregistrem trajectòria a partir del seu llançament
+        for drop_idx, ball in enumerate(ball_objects):
+            drop_info = DROPS_CONFIG[drop_idx]
+            if f >= drop_info["drop_frame"]:
+                ball.location = ball.matrix_world.translation.copy()
+                ball.rotation_euler = ball.matrix_world.to_euler()
+                ball.keyframe_insert(data_path="location", frame=f)
+                ball.keyframe_insert(data_path="rotation_euler", frame=f)
 
-            if not has_moved[obj.name]:
-                diff = (cur_loc - init_states[obj.name][0]).length
-                if diff > 0.002:
-                    has_moved[obj.name] = True
+        # Cubs: només keyframegem els que reben un impacte real (> 1.5 cm) per no saturar memòria
+        for cube in active_cubes:
+            cur_loc = cube.matrix_world.translation.copy()
+            cur_rot = cube.matrix_world.to_euler()
+
+            if not has_moved[cube.name]:
+                diff = (cur_loc - init_states[cube.name][0]).length
+                if diff > 0.015:
+                    has_moved[cube.name] = True
                     if f > 1:
-                        obj.location = init_states[obj.name][0]
-                        obj.rotation_euler = init_states[obj.name][1]
-                        obj.keyframe_insert(data_path="location", frame=f - 1)
-                        obj.keyframe_insert(data_path="rotation_euler", frame=f - 1)
+                        cube.location = init_states[cube.name][0]
+                        cube.rotation_euler = init_states[cube.name][1]
+                        cube.keyframe_insert(data_path="location", frame=f - 1)
+                        cube.keyframe_insert(data_path="rotation_euler", frame=f - 1)
 
-            if has_moved[obj.name]:
-                obj.location = cur_loc
-                obj.rotation_euler = cur_rot
-                obj.keyframe_insert(data_path="location", frame=f)
-                obj.keyframe_insert(data_path="rotation_euler", frame=f)
+            if has_moved[cube.name]:
+                cube.location = cur_loc
+                cube.rotation_euler = cur_rot
+                cube.keyframe_insert(data_path="location", frame=f)
+                cube.keyframe_insert(data_path="rotation_euler", frame=f)
 
     # Retirem el motor físic perquè el fitxer sigui una animació pura independent
     bpy.ops.rigidbody.world_remove()
