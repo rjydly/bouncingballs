@@ -1,6 +1,7 @@
 import os
 import math
 import wave
+import shutil
 import subprocess
 import requests
 import numpy as np
@@ -12,21 +13,20 @@ import bpy
 TEST_MODE = True  # 👉 CANVIA AQUÍ: True (envia a Telegram) | False (no fa res)
 
 OUTPUT_VIDEO = "output_spiral.mp4"
-TEMP_RAW_VIDEO = "temp_render.mp4"
+FRAMES_DIR = "temp_frames"
 TEMP_AUDIO = "temp_chimes.wav"
 
 FPS = 30
-TOTAL_FRAMES = 180  # 6 segons de durada
+TOTAL_FRAMES = 180  # 6 segons de vídeo
 WIDTH = 720
 HEIGHT = 1280
 
-# Secrets de Telegram (es llegeixen de GitHub Actions si TEST_MODE = True)
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 
 # ==============================================================================
-# 🔔 1. SÍNTESI D'ÀUDIO PROCEDURAL (CAMPANES HARMÒNIQUES)
+# 🔔 1. SÍNTESI D'ÀUDIO PROCEDURAL (CAMPANES DE VIDRE)
 # ==============================================================================
 def generate_chimes_audio(duration_sec, output_wav):
     print("🎵 Sintetitzant àudio de campanes...")
@@ -69,10 +69,15 @@ def generate_chimes_audio(duration_sec, output_wav):
 
 
 # ==============================================================================
-# 🎨 2. RENDERITZAT 3D PROCEDURAL (BLENDER HEADLESS)
+# 🎨 2. RENDERITZAT 3D A SEQÜÈNCIA D'IMATGES PNG (BLENDER 5.x)
 # ==============================================================================
 def render_3d_spiral():
     print("🎬 Construint escena 3D a Blender...")
+    
+    if os.path.exists(FRAMES_DIR):
+        shutil.rmtree(FRAMES_DIR)
+    os.makedirs(FRAMES_DIR, exist_ok=True)
+
     bpy.ops.wm.read_factory_settings(use_empty=True)
     scene = bpy.context.scene
 
@@ -82,16 +87,13 @@ def render_3d_spiral():
     scene.render.resolution_x = WIDTH
     scene.render.resolution_y = HEIGHT
 
-    # Cycles per CPU: Sense finestres ni servidors gràfics
+    # Configuració 100% universal: Exportació en PNGs per a Cycles CPU
+    scene.render.image_settings.file_format = 'PNG'
+    scene.render.image_settings.color_mode = 'RGB'
     scene.render.engine = 'CYCLES'
     scene.cycles.device = 'CPU'
     scene.cycles.samples = 16
     scene.cycles.use_denoising = True
-
-    scene.render.image_settings.file_format = 'FFMPEG'
-    scene.render.ffmpeg.format = 'MPEG4'
-    scene.render.ffmpeg.codec = 'H264'
-    scene.render.filepath = f"//{TEMP_RAW_VIDEO}"
 
     # Càmera
     cam_data = bpy.data.cameras.new("Camera")
@@ -151,7 +153,7 @@ def render_3d_spiral():
     base_mesh.from_pydata(initial_verts, [], [])
     base_mesh.update()
 
-    print("Renderitzant fotogrames 3D...")
+    print("Renderitzant seqüència PNG...")
     for frame in range(1, TOTAL_FRAMES + 1):
         scene.frame_set(frame)
         t = (frame / TOTAL_FRAMES) * math.pi * 4.0
@@ -169,7 +171,11 @@ def render_3d_spiral():
         base_mesh.from_pydata(verts, [], [])
         base_mesh.update()
 
+        # Guarda cada fotograma de manera independent
+        scene.render.filepath = os.path.join(FRAMES_DIR, f"frame_{frame:04d}.png")
         bpy.ops.render.render(write_still=True)
+        if frame % 30 == 0:
+            print(f"  -> {frame}/{TOTAL_FRAMES} fotogrames llestos")
 
 
 # ==============================================================================
@@ -215,34 +221,45 @@ def send_telegram_video(video_path):
 def main():
     print(f"🔧 Estat de la variable TEST_MODE: {TEST_MODE}")
 
-    # 1. Generar vídeo 3D
+    # 1. Renderitzar imatges
     render_3d_spiral()
 
-    # 2. Generar àudio procedimental
+    # 2. Sintetitzar àudio
     duration = TOTAL_FRAMES / FPS
     generate_chimes_audio(duration, TEMP_AUDIO)
 
-    # 3. Unió FFmpeg
-    print("⚡ Unint àudio i vídeo...")
+    # 3. Unir la seqüència PNG + Àudio amb FFmpeg
+    print("⚡ Empaquetant MP4 H.264 amb FFmpeg...")
+    frame_pattern = os.path.join(FRAMES_DIR, "frame_%04d.png")
     subprocess.run(
         [
-            "ffmpeg", "-y", "-i", TEMP_RAW_VIDEO, "-i", TEMP_AUDIO,
-            "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-            "-shortest", OUTPUT_VIDEO
+            "ffmpeg", "-y",
+            "-framerate", str(FPS),
+            "-i", frame_pattern,
+            "-i", TEMP_AUDIO,
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            "-preset", "fast",
+            "-crf", "22",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-shortest",
+            OUTPUT_VIDEO
         ],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        check=True
     )
 
-    # Neteja de temporals
-    for f in [TEMP_RAW_VIDEO, TEMP_AUDIO]:
-        if os.path.exists(f):
-            os.remove(f)
+    # Neteja de fitxers temporals
+    if os.path.exists(FRAMES_DIR):
+        shutil.rmtree(FRAMES_DIR)
+    if os.path.exists(TEMP_AUDIO):
+        os.remove(TEMP_AUDIO)
 
     # 4. Decisió segons la variable TEST_MODE
     if TEST_MODE is True:
         send_telegram_video(OUTPUT_VIDEO)
     else:
-        print("⏸️ TEST_MODE és False: el vídeo s'ha generat localment, però no s'ha enviat ni publicat enlloc.")
+        print("⏸️ TEST_MODE és False: el vídeo s'ha generat a disc però no s'ha enviat enlloc.")
 
 
 if __name__ == "__main__":
