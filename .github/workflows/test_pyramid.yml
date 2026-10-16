@@ -5,7 +5,7 @@ on:
 
 jobs:
   # -------------------------------------------------------------
-  # FASE 1: 1 MÀQUINA SIMULA LES 4 RONDES (~30 SEGONS)
+  # FASE 1: 1 MÀQUINA SIMULA ELS 4 CLIPS NETS (15-20 SEGONS)
   # -------------------------------------------------------------
   simulate_physics:
     runs-on: ubuntu-latest
@@ -26,21 +26,23 @@ jobs:
       - name: Instal·lar dependències
         run: pip install numpy
 
-      - name: Simular col·lisions i congelar keyframes
+      - name: Simular els 4 clips i extreure impactes ASMR
         run: |
           export PYTHONPATH=$(python -c "import site; print(site.getsitepackages()[0])"):$PYTHONPATH
           blender --python-exit-code 1 -b -P 3D/generate_pyramid.py -- --simulate
 
-      - name: Desar escena amb física congelada
+      - name: Desar clips amb física congelada i àudio
         uses: actions/upload-artifact@v4
         with:
-          name: baked-blend
-          path: pyramid_baked.blend
+          name: baked-clips
+          path: |
+            clip_*.blend
+            impact_events.json
           if-no-files-found: error
           retention-days: 1
 
   # -------------------------------------------------------------
-  # FASE 2: 19 MÀQUINES RENDERITZEN (AMB TEMPS DE SOBRA)
+  # FASE 2: 19 MÀQUINES RENDERITZEN (~44 FOTOGRAMES CADASCUNA)
   # -------------------------------------------------------------
   render_chunk:
     needs: simulate_physics
@@ -58,14 +60,14 @@ jobs:
       - name: Instal·lar Blender
         run: sudo snap install blender --classic
 
-      - name: Descarregar escena amb física congelada
+      - name: Descarregar clips amb física congelada
         uses: actions/download-artifact@v4
         with:
-          name: baked-blend
+          name: baked-clips
 
       - name: Renderitzar tall de fotogrames (Chunk ${{ matrix.chunk }})
         run: |
-          blender --python-exit-code 1 -b pyramid_baked.blend -P 3D/generate_pyramid.py -- --render-chunk ${{ matrix.chunk }} 19
+          blender --python-exit-code 1 -b -P 3D/generate_pyramid.py -- --render-chunk ${{ matrix.chunk }} 19
 
       - name: Pujar fotogrames d'aquest tall
         uses: actions/upload-artifact@v4
@@ -75,7 +77,7 @@ jobs:
           retention-days: 1
 
   # -------------------------------------------------------------
-  # FASE 3: ACOBLAMENT, TEXT 2D AMB FFMPEG I TELEGRAM
+  # FASE 3: ACOBLAMENT, ÀUDIO ASMR I TELEGRAM
   # -------------------------------------------------------------
   assemble_and_send:
     needs: render_chunk
@@ -91,11 +93,16 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Instal·lar FFmpeg i Fonts
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core
+      - name: Instal·lar FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
       - name: Instal·lar dependències
         run: pip install requests numpy
+
+      - name: Descarregar esdeveniments d'impacte
+        uses: actions/download-artifact@v4
+        with:
+          name: baked-clips
 
       - name: Descarregar tots els talls renderitzats (19 chunks)
         uses: actions/download-artifact@v4
@@ -104,7 +111,7 @@ jobs:
           merge-multiple: true
           path: all_frames
 
-      - name: Acoblar vídeo final de destrucció i enviar a Telegram
+      - name: Acoblar vídeo final i enviar a Telegram
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
