@@ -29,13 +29,14 @@ jobs:
       - name: Simular col·lisions i congelar keyframes
         run: |
           export PYTHONPATH=$(python -c "import site; print(site.getsitepackages()[0])"):$PYTHONPATH
-          blender -b -P 3D/generate_pyramid.py -- --simulate
+          blender --python-exit-code 1 -b -P 3D/generate_pyramid.py -- --simulate
 
       - name: Desar escena amb física congelada
         uses: actions/upload-artifact@v4
         with:
           name: baked-blend
           path: pyramid_baked.blend
+          if-no-files-found: error
           retention-days: 1
 
   # -------------------------------------------------------------
@@ -64,7 +65,7 @@ jobs:
 
       - name: Renderitzar tall de fotogrames (Chunk ${{ matrix.chunk }})
         run: |
-          blender -b pyramid_baked.blend -P 3D/generate_pyramid.py -- --render-chunk ${{ matrix.chunk }} 19
+          blender --python-exit-code 1 -b pyramid_baked.blend -P 3D/generate_pyramid.py -- --render-chunk ${{ matrix.chunk }} 19
 
       - name: Pujar fotogrames d'aquest tall
         uses: actions/upload-artifact@v4
