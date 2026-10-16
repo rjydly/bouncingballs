@@ -6,8 +6,18 @@ on:
     - cron: '0 14,19,23 * * *'
   workflow_dispatch:
     inputs:
+      test_mode:
+        description: 'Mode Prova (Només envia a Telegram, no publica)?'
+        required: true
+        default: false
+        type: boolean
+      render_3d_spiral:
+        description: 'Executar la prova 3D de les boletes (generate_spiral.py)?'
+        required: true
+        default: false
+        type: boolean
       mode:
-        description: 'Mode a executar (deixa "auto" per a rotació):'
+        description: 'Mode 2D habitual (si no s executant el 3D):'
         required: true
         default: 'auto'
         type: choice
@@ -25,12 +35,12 @@ on:
         type: boolean
 
 permissions:
-  contents: write  # Necessari per fer push del vídeo a la carpeta videos/
+  contents: write
 
 jobs:
   render_and_publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     steps:
       - name: Baixar repositori
@@ -52,30 +62,40 @@ jobs:
       - name: Instal·lar FFmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
+      - name: Instal·lar Blender
+        run: sudo snap install blender --classic
+
       - name: Instal·lar dependències Python
         run: pip install -r requirements.txt
 
-      - name: Instal·lar Firefox per a Playwright
+      - name: Instal·lar Firefox per a Playwright (només per al sistema 2D)
+        if: ${{ github.event.inputs.render_3d_spiral != 'true' }}
         run: playwright install --with-deps firefox
 
-      - name: Executar generador i distribuïdor social
+      # EXECUCIÓ 1: PROVA 3D DE LES BOLETES
+      - name: Executar generador 3D (Boletes)
+        if: ${{ github.event.inputs.render_3d_spiral == 'true' }}
         env:
-          # Repositori
+          TEST_MODE: ${{ github.event.inputs.test_mode || 'false' }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python generate_spiral.py
+
+      # EXECUCIÓ 2: SISTEMA HABITUAL 2D
+      - name: Executar generador 2D i distribuïdor social
+        if: ${{ github.event.inputs.render_3d_spiral != 'true' }}
+        env:
           GITHUB_REPO: ${{ github.repository }}
           SELECTED_MODE: ${{ github.event.inputs.mode || 'auto' }}
           FORCE_SNAPCHAT: ${{ github.event.inputs.force_snapchat || 'false' }}
-          # Zernio (Instagram i Facebook)
           ZERNIO_API_KEY: ${{ secrets.ZERNIO_API_KEY }}
           ZERNIO_INSTAGRAM_ACCOUNT_ID: ${{ secrets.ZERNIO_INSTAGRAM_ACCOUNT_ID }}
           ZERNIO_FACEBOOK_ACCOUNT_ID: ${{ secrets.ZERNIO_FACEBOOK_ACCOUNT_ID }}
-          # Buffer (TikTok i YouTube)
           BUFFER_ACCESS_TOKEN: ${{ secrets.BUFFER_ACCESS_TOKEN }}
           BUFFER_TIKTOK_CHANNEL_ID: ${{ secrets.BUFFER_TIKTOK_CHANNEL_ID }}
           BUFFER_YOUTUBE_CHANNEL_ID: ${{ secrets.BUFFER_YOUTUBE_CHANNEL_ID }}
-          # bundle.social (Snapchat Spotlight)
           BUNDLE_SOCIAL_API_KEY: ${{ secrets.BUNDLE_SOCIAL_API_KEY }}
           BUNDLE_SOCIAL_TEAM_ID: ${{ secrets.BUNDLE_SOCIAL_TEAM_ID }}
-          # Telegram (Report i backup)
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python main.py
