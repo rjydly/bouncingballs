@@ -5,7 +5,7 @@ on:
 
 jobs:
   # -------------------------------------------------------------
-  # FASE 1: 1 MÀQUINA SIMULA LA FÍSICA BULLET (25-30 SEGONS)
+  # FASE 1: 1 MÀQUINA SIMULA LES 4 RONDES (~30 SEGONS)
   # -------------------------------------------------------------
   simulate_physics:
     runs-on: ubuntu-latest
@@ -45,7 +45,7 @@ jobs:
   render_chunk:
     needs: simulate_physics
     runs-on: ubuntu-latest
-    timeout-minutes: 25  # 👈 Pujat a 25 minuts perquè cap màquina es talli mai
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -75,7 +75,7 @@ jobs:
           retention-days: 1
 
   # -------------------------------------------------------------
-  # FASE 3: ACOBLAMENT, ÀUDIO I TELEGRAM (15 SEGONS)
+  # FASE 3: ACOBLAMENT, TEXT 2D AMB FFMPEG I TELEGRAM
   # -------------------------------------------------------------
   assemble_and_send:
     needs: render_chunk
@@ -91,8 +91,8 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Instal·lar FFmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Instal·lar FFmpeg i Fonts
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core
 
       - name: Instal·lar dependències
         run: pip install requests numpy
