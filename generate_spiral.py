@@ -19,21 +19,20 @@ ASSEMBLE_DIR = "all_frames"
 TEMP_AUDIO = "temp_chimes.wav"
 
 FPS = 30
-TOTAL_FRAMES = 480  # 16 segons (480 / 15 màquines = 32 frames per màquina)
+TOTAL_FRAMES = 900  # 30 segons exactes (900 / 15 màquines = 60 frames per màquina)
 WIDTH = 720
 HEIGHT = 1280
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-# Geometria i dinàmica física real
+# Geometria i dinàmica física real (INTACTES)
 NUM_RINGS = 16
 R_MIN = 0.30
 R_MAX = 3.25
 BALL_RADIUS = 0.062
 BOUNCE_HEIGHT = 1.45
 
-# Durada del 1r bot (1.7 segons = bot lent i elegant)
 T_FIRST_BOUNCE = 1.70
 
 # ==============================================================================
@@ -41,7 +40,7 @@ T_FIRST_BOUNCE = 1.70
 # ==============================================================================
 COLOR_SEED = 2026
 rng = np.random.RandomState(COLOR_SEED)
-random_hues = rng.rand(40)
+random_hues = rng.rand(60)
 COLOR_PALETTE = []
 for h in random_hues:
     r, g, b = colorsys.hsv_to_rgb(h, 0.88, 0.95)
@@ -65,22 +64,18 @@ def get_ring_color(ring_idx, phase):
 
 
 # ==============================================================================
-# 📐 FÍSICA REAL: EL CENTRE SIMPLEMENT BOTA MÉS RÀPID A PARTIR DEL 2n BOT
+# 📐 FÍSICA REAL: DINÀMICA IDENTICA I SUAU
 # ==============================================================================
 def get_ring_phase_and_height(ring_idx, t):
-    u = ring_idx / (NUM_RINGS - 1)  # 0.0 (centre) a 1.0 (vora exterior)
+    u = ring_idx / (NUM_RINGS - 1)
     
     if t <= T_FIRST_BOUNCE:
-        # 1r BOT: Totes les boles són 100% idèntiques en altura i velocitat
         phase = (math.pi / T_FIRST_BOUNCE) * t
     else:
-        # A PARTIR DEL 2n BOT: El centre és un 14% més ràpid de forma natural
-        # Simplement completa el cicle abans i baixa cap al terra més ràpid!
         speed_factor = 1.0 + 0.14 * (1.0 - u)
         tau = t - T_FIRST_BOUNCE
         phase = math.pi + (math.pi / T_FIRST_BOUNCE) * tau * speed_factor
 
-    # Trajectòria de bot suau i natural sense deformacions estranyes
     z = BOUNCE_HEIGHT * (abs(math.sin(phase)) ** 1.30)
     return phase, z
 
@@ -89,7 +84,7 @@ def get_ring_phase_and_height(ring_idx, t):
 # 🔔 1. SÍNTESI D'ÀUDIO SINCRONITZAT AMB ELS XOCS
 # ==============================================================================
 def generate_chimes_audio(duration_sec, output_wav):
-    print("🎵 Sintetitzant àudio sincronitzat amb els impactes...")
+    print("🎵 Sintetitzant àudio sincronitzat per a 30 segons...")
     SAMPLE_RATE = 44100
     n_samples = int(duration_sec * SAMPLE_RATE)
     audio = np.zeros(n_samples, dtype=np.float32)
@@ -182,7 +177,7 @@ def render_chunk():
     scene.render.image_settings.file_format = 'PNG'
     scene.render.image_settings.color_mode = 'RGB'
 
-    # CÀMERA MÉS LLUNY: Marge ampli i net al voltant de tot el pedestal
+    # Càmera
     cam_data = bpy.data.cameras.new("Camera")
     cam = bpy.data.objects.new("Camera", cam_data)
     scene.collection.objects.link(cam)
@@ -278,7 +273,6 @@ def render_chunk():
             ring_i = sys_data["idx"]
             phase, z = get_ring_phase_and_height(ring_i, t)
             
-            # Actualitzar coordenades z naturals
             coords = np.column_stack((
                 sys_data["rx"],
                 sys_data["ry"],
@@ -287,13 +281,12 @@ def render_chunk():
             sys_data["mesh"].vertices.foreach_set("co", coords)
             sys_data["mesh"].update()
 
-            # Actualitzar color: el centre canvia abans en tocar el terra més ràpid
             color = get_ring_color(ring_i, phase)
             sys_data["bsdf"].inputs["Base Color"].default_value = color
 
         scene.render.filepath = os.path.join(FRAMES_DIR, f"frame_{frame:04d}.png")
         bpy.ops.render.render(write_still=True)
-        if frame % 10 == 0 or frame == end_frame:
+        if frame % 15 == 0 or frame == end_frame:
             print(f"  [Chunk {chunk_idx}] Frame {frame}/{TOTAL_FRAMES} enllestit.")
 
 
@@ -305,13 +298,13 @@ def send_telegram_video(video_path):
         print("⚠️ Falten secrets de Telegram.")
         return
 
-    print("📲 TEST_MODE=True: Enviant vídeo a Telegram...")
+    print("📲 TEST_MODE=True: Enviant vídeo de 30s a Telegram...")
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVideo"
     caption = (
-        "✨ <b>BOUNCELAB 3D - MOVIMENT NATURAL I CÀMERA AMPLA</b>\n\n"
-        "🔭 <b>Enquadrament:</b> Pedestal complet amb ampli marge a tots els costats\n"
-        "⚡ <b>Dinàmica:</b> 1r bot 100% pla a l'uníson -> Al 2n bot el centre simplement baixa més àgil cap al terra de manera neta i harmònica\n"
-        "🌈 <b>Colors:</b> Onades de color que flueixen des del centre"
+        "✨ <b>BOUNCELAB 3D - VERSIÓ COMPLETA (30s)</b>\n\n"
+        "⏱️ <b>Durada:</b> 30 segons exactes a 30 FPS (900 fotogrames)\n"
+        "🧘 <b>Física:</b> Idèntica, suau i natural\n"
+        "🔔 <b>Àudio:</b> Sincronitzat amb tota l'extensió del vídeo"
     )
 
     try:
@@ -325,10 +318,10 @@ def send_telegram_video(video_path):
                     "supports_streaming": True
                 },
                 files={"video": f},
-                timeout=180
+                timeout=240
             )
         if res.status_code == 200:
-            print("✅ Vídeo enviat a Telegram amb èxit!")
+            print("✅ Vídeo de 30s enviat a Telegram amb èxit!")
         else:
             print(f"❌ Error Telegram ({res.status_code}): {res.text}")
     except Exception as e:
@@ -339,7 +332,7 @@ def send_telegram_video(video_path):
 # 🎬 4. ACOBLAMENT FINAL (FFMPEG)
 # ==============================================================================
 def assemble_final_video():
-    print("⚡ Unint els 480 fotogrames descarregats...")
+    print("⚡ Unint els 900 fotogrames descarregats...")
     duration = TOTAL_FRAMES / FPS
     generate_chimes_audio(duration, TEMP_AUDIO)
 
