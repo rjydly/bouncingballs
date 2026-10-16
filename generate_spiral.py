@@ -18,48 +18,104 @@ ASSEMBLE_DIR = "all_frames"
 TEMP_AUDIO = "temp_chimes.wav"
 
 FPS = 30
-TOTAL_FRAMES = 180  # 6 segons
+TOTAL_FRAMES = 240  # 8 segons (permet veure la transició de pla a ona)
 WIDTH = 720
 HEIGHT = 1280
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
+# Geometria dels anells concèntrics
+NUM_RINGS = 16
+R_MIN = 0.35
+R_MAX = 3.60
+BALL_RADIUS = 0.065
+BOUNCE_HEIGHT = 1.35
+BOUNCE_FREQ = 1.15  # Cicles de bot per segon
 
 # ==============================================================================
-# 🔔 1. SÍNTESI D'ÀUDIO PROCEDURAL
+# 📐 CÀLCUL MATEMÀTIC DEL MOVIMENT (TRANSICIÓ PLA -> ONA)
+# ==============================================================================
+def get_ring_height(ring_idx, t):
+    """
+    Calcula l'altura z d'un anell en el temps t.
+    Comença sincronitzat (pla) i progressivament crea un desfasament radial (ona).
+    """
+    u = ring_idx / (NUM_RINGS - 1)  # 0.0 (centre) a 1.0 (vora exterior)
+    
+    # El decalatge de fase (ona) és 0 al principi i creix a partir del segon 1.8
+    if t < 1.8:
+        wave_dispersion = 0.0
+    else:
+        # Creixement suau de la dispersió de fase
+        progress = min(1.0, (t - 1.8) / 3.0)
+        wave_dispersion = progress * math.pi * 1.5
+
+    # Fase: a l'inici wave_dispersion=0, per tant tots els anells comparteixen la mateixa fase
+    phase = 2.0 * math.pi * BOUNCE_FREQ * t - (u * wave_dispersion)
+    
+    # Bouncing rectificat (altura >= 0 sempre, tocant el terra a z=0)
+    z = BOUNCE_HEIGHT * (abs(math.sin(phase)) ** 1.35)
+    return z
+
+
+# ==============================================================================
+# 🔔 1. SÍNTESI D'ÀUDIO PER IMPACTES FÍSICS REALS A TERRA
 # ==============================================================================
 def generate_chimes_audio(duration_sec, output_wav):
-    print("🎵 Sintetitzant àudio de campanes...")
+    print("🎵 Calculant impactes contra el terra i sintetitzant notes...")
     SAMPLE_RATE = 44100
     n_samples = int(duration_sec * SAMPLE_RATE)
     audio = np.zeros(n_samples, dtype=np.float32)
 
-    chime_freqs = [523.25, 659.25, 783.99, 1046.50]
-    strike_times = [0.0, 1.5, 3.0, 4.5]
+    # Escala pentatònica de C major (des de greus a l'exterior fins a aguts al centre)
+    # 16 notes harmòniques cristal·lines
+    NOTES_SCALE = [
+        130.81, 146.83, 164.81, 196.00, 220.00,  # C3 - A3
+        261.63, 293.66, 329.63, 392.00, 440.00,  # C4 - A4
+        523.25, 587.33, 659.25, 783.99, 880.00,  # C5 - A5
+        1046.50                                   # C6
+    ]
 
-    for idx, t_strike in enumerate(strike_times):
-        start = int(t_strike * SAMPLE_RATE)
-        if start >= n_samples:
-            continue
-        
-        dur_note = min(2.5, duration_sec - t_strike)
-        n_note = int(dur_note * SAMPLE_RATE)
-        t = np.linspace(0, dur_note, n_note, False)
-        
-        freq = chime_freqs[idx % len(chime_freqs)]
-        note = (
-            0.60 * np.sin(2 * np.pi * freq * t) +
-            0.30 * np.sin(2 * np.pi * (freq * 2.02) * t) +
-            0.15 * np.sin(2 * np.pi * (freq * 3.01) * t)
-        ) * np.exp(-2.2 * t)
-        
-        audio[start : start + n_note] += note
+    # Mostrejar les altures a alta freqüència (600 fps) per detectar els moments de xoc amb el terra (mínims z=0)
+    DT_AUDIO_SCAN = 1.0 / 600.0
+    scan_steps = int(duration_sec / DT_AUDIO_SCAN)
+    
+    for ring_idx in range(NUM_RINGS):
+        freq = NOTES_SCALE[(NUM_RINGS - 1) - ring_idx]  # Exterior greu, interior agut
+        prev_z = get_ring_height(ring_idx, 0.0)
+        prev_vel = 0.0
 
-    audio = np.tanh(audio * 1.2)
+        for step in range(1, scan_steps):
+            t_curr = step * DT_AUDIO_SCAN
+            z_curr = get_ring_height(ring_idx, t_curr)
+            vel = z_curr - prev_z
+
+            # Detectem el canvi de sentit just quan la pilota colpeja el terra (vel passa de negativa a positiva i z ~ 0)
+            if prev_vel <= 0.0 and vel > 0.0 and z_curr < 0.08:
+                hit_sample = int(t_curr * SAMPLE_RATE)
+                if hit_sample < n_samples:
+                    # Durada de la ressonància de la campana
+                    note_len = min(int(1.8 * SAMPLE_RATE), n_samples - hit_sample)
+                    t_note = np.linspace(0, note_len / SAMPLE_RATE, note_len, False)
+                    
+                    # So de campana metàl·lica amb harmònics i caiguda
+                    sound_wave = (
+                        0.60 * np.sin(2 * np.pi * freq * t_note) +
+                        0.30 * np.sin(2 * np.pi * (freq * 2.01) * t_note) +
+                        0.10 * np.sin(2 * np.pi * (freq * 3.00) * t_note)
+                    ) * np.exp(-3.5 * t_note)
+                    
+                    audio[hit_sample : hit_sample + note_len] += sound_wave * 0.45
+
+            prev_z = z_curr
+            prev_vel = vel
+
+    # Compressió suau per evitar distorsió quan sonen totes les boles a la vegada a l'inici
+    audio = np.tanh(audio * 1.4)
     max_amp = np.max(np.abs(audio))
     if max_amp > 0:
-        audio = audio / max_amp * 31000
+        audio = (audio / max_amp) * 31500
 
     audio_int16 = audio.astype(np.int16)
     with wave.open(output_wav, "w") as wf:
@@ -70,7 +126,7 @@ def generate_chimes_audio(duration_sec, output_wav):
 
 
 # ==============================================================================
-# 🎨 2. RENDERITZAT 3D D'UN CHUNK ESPECÍFIC (BLENDER)
+# 🎨 2. RENDERITZAT 3D DE CADA CHUNK (BLENDER)
 # ==============================================================================
 def render_chunk():
     import bpy
@@ -82,7 +138,7 @@ def render_chunk():
     start_frame = chunk_idx * frames_per_chunk + 1
     end_frame = min(TOTAL_FRAMES, (chunk_idx + 1) * frames_per_chunk)
 
-    print(f"🎬 Runner #{chunk_idx} processant fotogrames del {start_frame} al {end_frame}...")
+    print(f"🎬 Runner #{chunk_idx}: processant fotogrames {start_frame} a {end_frame}...")
     os.makedirs(FRAMES_DIR, exist_ok=True)
 
     bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -92,7 +148,7 @@ def render_chunk():
     scene.render.resolution_x = WIDTH
     scene.render.resolution_y = HEIGHT
 
-    # Optimitzacions CPU
+    # Optimitzacions Cycles CPU
     scene.render.engine = 'CYCLES'
     scene.cycles.device = 'CPU'
     scene.cycles.samples = 4
@@ -107,82 +163,114 @@ def render_chunk():
     scene.render.image_settings.file_format = 'PNG'
     scene.render.image_settings.color_mode = 'RGB'
 
-    # Càmera
+    # Càmera angular elevada
     cam_data = bpy.data.cameras.new("Camera")
     cam = bpy.data.objects.new("Camera", cam_data)
     scene.collection.objects.link(cam)
     scene.camera = cam
-    cam.location = (0, -11.0, 7.5)
-    cam.rotation_euler = (math.radians(58), 0, 0)
+    cam.location = (0, -10.2, 7.8)
+    cam.rotation_euler = (math.radians(54), 0, 0)
 
-    # Llum
-    light_data = bpy.data.lights.new(name="TopLight", type='AREA')
-    light_data.energy = 450
-    light_data.size = 8.0
-    light = bpy.data.objects.new("TopLight", light_data)
-    light.location = (0, 0, 8.5)
+    # Llums (Principal i rebliment lateral)
+    light_data = bpy.data.lights.new(name="MainLight", type='AREA')
+    light_data.energy = 500
+    light_data.size = 9.0
+    light = bpy.data.objects.new("MainLight", light_data)
+    light.location = (0, -1.0, 9.0)
     scene.collection.objects.link(light)
 
-    # Materials
+    # 1. MATERIALS
+    # Boles: Verd maragda brillant amb metall
     mat_sphere = bpy.data.materials.new("SphereMat")
-    bsdf = mat_sphere.node_tree.nodes.get("Principled BSDF")
-    bsdf.inputs["Base Color"].default_value = (0.05, 0.85, 0.45, 1.0)
-    bsdf.inputs["Metallic"].default_value = 0.85
-    bsdf.inputs["Roughness"].default_value = 0.15
+    bsdf_s = mat_sphere.node_tree.nodes.get("Principled BSDF")
+    bsdf_s.inputs["Base Color"].default_value = (0.05, 0.90, 0.45, 1.0)
+    bsdf_s.inputs["Metallic"].default_value = 0.85
+    bsdf_s.inputs["Roughness"].default_value = 0.12
 
-    mat_mirror = bpy.data.materials.new("MirrorMat")
-    bsdf_m = mat_mirror.node_tree.nodes.get("Principled BSDF")
-    bsdf_m.inputs["Base Color"].default_value = (0.02, 0.03, 0.03, 1.0)
-    bsdf_m.inputs["Metallic"].default_value = 0.95
-    bsdf_m.inputs["Roughness"].default_value = 0.05
+    # Terra/Pedestal: Base fosca visible amb bisell de contrast
+    mat_floor = bpy.data.materials.new("FloorMat")
+    bsdf_f = mat_floor.node_tree.nodes.get("Principled BSDF")
+    bsdf_f.inputs["Base Color"].default_value = (0.08, 0.10, 0.12, 1.0)
+    bsdf_f.inputs["Metallic"].default_value = 0.30
+    bsdf_f.inputs["Roughness"].default_value = 0.35
 
-    # Disc mirall
-    bpy.ops.mesh.primitive_cylinder_add(radius=4.8, depth=0.1, location=(0, 0, -2.8))
-    mirror_disc = bpy.context.active_object
-    mirror_disc.data.materials.append(mat_mirror)
+    # 2. CREACIÓ DEL TERRA (EL PEDESTAL DEL VÍDEO)
+    # Col·locat exactament a z = -BALL_RADIUS perquè les boles toquin la superfície en z=0
+    bpy.ops.mesh.primitive_cylinder_add(
+        vertices=64,
+        radius=R_MAX + 0.45,
+        depth=0.5,
+        location=(0, 0, -BALL_RADIUS - 0.25)
+    )
+    floor_obj = bpy.context.active_object
+    floor_obj.data.materials.append(mat_floor)
 
-    # Espiral de Fermat
-    N_BALLS = 1200
-    GOLDEN_ANGLE = math.pi * (3.0 - math.sqrt(5.0))
+    # Anell de contorn estètic al terra
+    bpy.ops.mesh.primitive_torus_add(
+        major_radius=R_MAX + 0.45,
+        minor_radius=0.04,
+        major_segments=64,
+        minor_segments=12,
+        location=(0, 0, -BALL_RADIUS)
+    )
+    ring_border = bpy.context.active_object
+    ring_border.data.materials.append(mat_sphere)
 
-    base_mesh = bpy.data.meshes.new("SpiralPointsMesh")
-    spiral_obj = bpy.data.objects.new("Spiral", base_mesh)
+    # 3. GENERACIÓ DELS ANELLS CONCÈNTRICS DE BOLES
+    ring_radii = np.linspace(R_MIN, R_MAX, NUM_RINGS)
+    all_x = []
+    all_y = []
+    ball_ring_indices = []
+
+    for idx, r in enumerate(ring_radii):
+        # Nombre de boles proporcional al perímetre de l'anell
+        num_balls = max(6, int(round((2.0 * math.pi * r) / (BALL_RADIUS * 2.3))))
+        angles = np.linspace(0, 2.0 * math.pi, num_balls, endpoint=False)
+        
+        for a in angles:
+            all_x.append(r * math.cos(a))
+            all_y.append(r * math.sin(a))
+            ball_ring_indices.append(idx)
+
+    total_balls = len(all_x)
+    ball_ring_indices = np.array(ball_ring_indices, dtype=np.int32)
+    all_x = np.array(all_x, dtype=np.float32)
+    all_y = np.array(all_y, dtype=np.float32)
+
+    # Malla base per instanciació
+    base_mesh = bpy.data.meshes.new("ConcentricBallsMesh")
+    spiral_obj = bpy.data.objects.new("ConcentricSystem", base_mesh)
     scene.collection.objects.link(spiral_obj)
 
-    bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=1, radius=0.075)
+    bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=1, radius=BALL_RADIUS)
     proto = bpy.context.active_object
     proto.data.materials.append(mat_sphere)
     proto.parent = spiral_obj
     spiral_obj.instance_type = 'VERTS'
 
-    indices = np.arange(N_BALLS)
-    thetas = indices * GOLDEN_ANGLE
-    radii = np.sqrt(indices) * 0.115
-    max_r = radii[-1]
-    u = radii / max_r
-
-    initial_verts = np.column_stack((radii * np.cos(thetas), radii * np.sin(thetas), np.zeros(N_BALLS)))
+    initial_verts = np.column_stack((all_x, all_y, np.zeros(total_balls, dtype=np.float32)))
     base_mesh.from_pydata(initial_verts.tolist(), [], [])
     base_mesh.update()
 
-    # Renderitzat del rang
+    # Precalcular altures per anell per a cada fotograma del chunk
     for frame in range(start_frame, end_frame + 1):
         scene.frame_set(frame)
-        t = (frame / TOTAL_FRAMES) * math.pi * 4.0
+        t = (frame - 1) / FPS
 
-        # CÀLCUL VECTORITZAT CORREGIT AMB np.cos
-        z = 1.4 * np.sin(u * math.pi * 3.0 - t) * (1.0 - u * 0.4)
-        r_mod = radii * (1.0 + 0.12 * np.cos(u * math.pi * 2.0 - t))
-        x = r_mod * np.cos(thetas)
-        y = r_mod * np.sin(thetas)
+        # Altura de cadascun dels 16 anells en aquest instant exacte
+        ring_z_values = np.array([get_ring_height(i, t) for i in range(NUM_RINGS)], dtype=np.float32)
+        
+        # Mapejar a cada bola segons a quin anell pertany
+        balls_z = ring_z_values[ball_ring_indices]
 
-        coords = np.column_stack((x, y, z)).astype(np.float32).ravel()
+        # Actualització directa a memòria
+        coords = np.column_stack((all_x, all_y, balls_z)).astype(np.float32).ravel()
         base_mesh.vertices.foreach_set("co", coords)
         base_mesh.update()
 
         scene.render.filepath = os.path.join(FRAMES_DIR, f"frame_{frame:04d}.png")
         bpy.ops.render.render(write_still=True)
-        print(f"  [Chunk {chunk_idx}] Fotograma {frame} guardat.")
+        print(f"  [Chunk {chunk_idx}] Frame {frame}/{TOTAL_FRAMES} OK.")
 
 
 # ==============================================================================
@@ -190,16 +278,16 @@ def render_chunk():
 # ==============================================================================
 def send_telegram_video(video_path):
     if not (TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID):
-        print("⚠️ Telegram: Falten credencials TELEGRAM_BOT_TOKEN o TELEGRAM_CHAT_ID.")
+        print("⚠️ Falten secrets de Telegram.")
         return
 
     print("📲 TEST_MODE=True: Enviant vídeo a Telegram...")
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVideo"
     caption = (
-        "🚀 <b>BOUNCELAB 3D (RENDERITZAT EN PARAL·LEL 15X)</b>\n\n"
-        "✨ <b>Temps de generació:</b> ~2 minuts (15 màquines alhora)\n"
-        "🟢 <b>Elements:</b> 1.200 boles en espiral àuria amb reflexos de mirall\n"
-        "🔔 <b>Àudio:</b> Sincronitzat automàticament"
+        "✨ <b>BOUNCELAB 3D - ANELLS CONCÈNTRICS</b>\n\n"
+        "🟢 <b>Moviment:</b> Bota en pla a l'inici i es converteix en ona concèntrica\n"
+        "🔘 <b>Terra:</b> Pedestal rígid integrat amb contacte visual exacte\n"
+        "🔔 <b>Àudio:</b> Cada fila d'anell dispara la seva nota quan toca el terra (acord uníson inicial -> cascada arpegiada)"
     )
 
     try:
@@ -216,7 +304,7 @@ def send_telegram_video(video_path):
                 timeout=180
             )
         if res.status_code == 200:
-            print("✅ Vídeo enviat a Telegram correctament!")
+            print("✅ Vídeo enviat a Telegram amb èxit!")
         else:
             print(f"❌ Error Telegram ({res.status_code}): {res.text}")
     except Exception as e:
@@ -227,7 +315,7 @@ def send_telegram_video(video_path):
 # 🎬 4. ACOBLAMENT FINAL (FFMPEG)
 # ==============================================================================
 def assemble_final_video():
-    print("⚡ Unint els 180 fotogrames descarregats...")
+    print("⚡ Unint els fotogrames i sincronitzant impactes...")
     duration = TOTAL_FRAMES / FPS
     generate_chimes_audio(duration, TEMP_AUDIO)
 
@@ -256,7 +344,7 @@ def assemble_final_video():
     if TEST_MODE is True:
         send_telegram_video(OUTPUT_VIDEO)
     else:
-        print("⏸️ TEST_MODE és False: s'ha creat output_spiral.mp4 però no s'ha enviat.")
+        print("⏸️ TEST_MODE és False: Vídeo generat a disc sense enviar.")
 
 
 # ==============================================================================
