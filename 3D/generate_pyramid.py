@@ -98,7 +98,6 @@ def simulate_single_round(mass, radius):
     scene.rigidbody_world.point_cache.frame_end = ROUND_FRAMES
     scene.rigidbody_world.substeps_per_frame = 10
     scene.rigidbody_world.solver_iterations = 10
-    # Gravetat cinematogràfica perquè la bola caigui amb ritme visual agradable
     scene.gravity = (0, 0, -8.2)
 
     # Terra
@@ -133,7 +132,7 @@ def simulate_single_round(mass, radius):
                 cubes.append(c)
                 cube_init_pos.append((x, y, z))
 
-    # Bola única de la ronda (cau des de 4.5m i impacta a ~1.4-1.5s)
+    # Bola de la ronda
     drop_z = (PYRAMID_LAYERS * CUBE_SIZE) + 4.5 + radius
     bpy.ops.mesh.primitive_uv_sphere_add(radius=radius, location=(0, 0, drop_z))
     ball = bpy.context.active_object
@@ -143,11 +142,11 @@ def simulate_single_round(mass, radius):
     ball.rigid_body.mass = mass
     ball.rigid_body.friction = 0.4
 
-    # Simular la física de la ronda
+    # Simular física de la ronda
     for f in range(1, ROUND_FRAMES + 1):
         scene.frame_set(f)
 
-    # Extreure coordenades simulades
+    # Extreure dades simulades
     cube_anim = []
     ball_anim = []
     for f in range(1, ROUND_FRAMES + 1):
@@ -173,7 +172,6 @@ def simulate_physics():
         if init_positions is None:
             init_positions = c_init
 
-    # Ara muntem l'escena definitiva amb keyframes (sense motor físic)
     print("🎬 Construint escena definitiva combinada amb piràmide reiniciada...")
     bpy.ops.wm.read_factory_settings(use_empty=True)
     scene = bpy.context.scene
@@ -203,7 +201,7 @@ def simulate_physics():
     ground = bpy.context.active_object
     ground.data.materials.append(mat_floor)
 
-    # Objectes de la piràmide
+    # Cubs de la piràmide
     scene_cubes = []
     for pos in init_positions:
         bpy.ops.mesh.primitive_cube_add(size=CUBE_SIZE * 0.98, location=pos)
@@ -211,7 +209,7 @@ def simulate_physics():
         cube_obj.data.materials.append(mat_block)
         scene_cubes.append(cube_obj)
 
-    # Bola única (la seva mida s'ajusta a cada ronda)
+    # Bola única
     bpy.ops.mesh.primitive_uv_sphere_add(radius=1.0, location=(0, 0, 15.0))
     ball_obj = bpy.context.active_object
     ball_obj.data.materials.append(mat_chrome)
@@ -225,7 +223,7 @@ def simulate_physics():
     cam.location = (0, -11.5, 7.5)
     cam.rotation_euler = (math.radians(60), 0, 0)
 
-    # Il·luminació d'estudi
+    # Il·luminació
     light_data = bpy.data.lights.new(name="MainLight", type='AREA')
     light_data.energy = 750
     light_data.size = 12.0
@@ -233,7 +231,6 @@ def simulate_physics():
     light.location = (0, -1.0, 12.0)
     scene.collection.objects.link(light)
 
-    # Llum de rebliment suau frontal
     fill_data = bpy.data.lights.new(name="FillLight", type='AREA')
     fill_data.energy = 200
     fill_data.size = 8.0
@@ -241,13 +238,12 @@ def simulate_physics():
     fill.location = (0, -8.0, 5.0)
     scene.collection.objects.link(fill)
 
-    # Inserir els keyframes de les 4 rondes
+    # Gravar keyframes a l'escena
     print("⏳ Gravant keyframes a l'escena (reinici net a cada pes)...")
     for r_idx in range(4):
         c_anim, b_anim, b_rad = sim_data[r_idx]
         base_f = r_idx * ROUND_FRAMES
 
-        # Escalar la bola per a la ronda actual
         ball_obj.scale = (b_rad, b_rad, b_rad)
         ball_obj.keyframe_insert("scale", frame=base_f + 1)
 
@@ -256,20 +252,20 @@ def simulate_physics():
         for local_f in range(ROUND_FRAMES):
             global_f = base_f + local_f + 1
 
-            # Animació de la bola
+            # Posició de la bola
             b_loc, b_rot = b_anim[local_f]
             ball_obj.location = b_loc
             ball_obj.rotation_euler = b_rot
             ball_obj.keyframe_insert("location", frame=global_f)
             ball_obj.keyframe_insert("rotation_euler", frame=global_f)
 
-            # Animació dels cubs
+            # Posició dels cubs amb math.dist() corregit
             for c_i, c_obj in enumerate(scene_cubes):
                 c_loc, c_rot = c_anim[local_f][c_i]
                 init_p = init_positions[c_i]
 
                 if not has_moved_cube[c_i]:
-                    diff = (c_loc - np.array(init_p)).length
+                    diff = math.dist(tuple(c_loc), init_p)
                     if diff > 0.015:
                         has_moved_cube[c_i] = True
                         if local_f > 0:
@@ -284,7 +280,6 @@ def simulate_physics():
                     c_obj.keyframe_insert("location", frame=global_f)
                     c_obj.keyframe_insert("rotation_euler", frame=global_f)
 
-        # Si algun cub mai no s'ha mogut en aquesta ronda, assegurem que quedi a lloc al primer frame de la ronda
         for c_i, c_obj in enumerate(scene_cubes):
             if not has_moved_cube[c_i]:
                 c_obj.location = init_positions[c_i]
@@ -385,7 +380,6 @@ def assemble_final_video():
     duration = TOTAL_FRAMES / FPS
     generate_impacts_audio(duration, TEMP_AUDIO)
 
-    # Buscar tipus de lletra estàndard d'Ubuntu
     font_candidates = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
@@ -397,7 +391,6 @@ def assemble_final_video():
             font_arg = f":fontfile='{f}'"
             break
 
-    # Filtre de text dinàmic per a cada ronda de 7 segons
     vf_filter = (
         f"drawtext=text='1 kg':enable='between(t,0,7)'{font_arg}:fontsize=80:fontcolor=white:borderw=5:bordercolor=black@0.85:x=(w-text_w)/2:y=130,"
         f"drawtext=text='10 kg':enable='between(t,7,14)'{font_arg}:fontsize=80:fontcolor=white:borderw=5:bordercolor=black@0.85:x=(w-text_w)/2:y=130,"
