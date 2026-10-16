@@ -224,6 +224,7 @@ class CustomHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
 
 
 def start_local_server():
+    socketserver.TCPServer.allow_reuse_address = True
     httpd = socketserver.TCPServer(("", PORT), CustomHTTPRequestHandler)
     thread = threading.Thread(target=httpd.serve_forever)
     thread.daemon = True
@@ -575,7 +576,6 @@ def publish_to_snapchat(video_path, captions):
     try:
         filename = os.path.basename(video_path)
         with open(video_path, "rb") as f:
-            # Força el tipus MIME exacte a video/mp4 per evitar errors 400
             files = {"file": (filename, f, "video/mp4")}
             data = {"teamId": BUNDLE_TEAM_ID}
             up_res = requests.post(upload_url, headers=headers_upload, files=files, data=data, timeout=120)
@@ -667,7 +667,7 @@ def run():
 
     os.makedirs(VIDEOS_DIR, exist_ok=True)
 
-    # 1. Netejar carpeta videos/ per evitar acumular gigues al repo
+    # 1. Netejar carpeta videos/ per evitar acumular arxius locals
     for f in os.listdir(VIDEOS_DIR):
         if f.endswith(".mp4"):
             try:
@@ -734,24 +734,42 @@ def run():
         active_mode, tts_phrase, actual_duration, winner_name, frozen_count, final_balls
     )
 
-    # 5. Fer Git commit & push del vídeo al repositori públic (CDN)
+    # 5. Git push a la branca òrfena 'cdn' (Mantingut el repositori net per sempre)
     public_video_url = None
     if GITHUB_REPO:
         try:
-            print("📤 Fent Git push del nou vídeo al repositori...")
-            subprocess.run(["git", "add", "videos/"], check=True)
-            subprocess.run(["git", "commit", "-m", f"Automated video upload {video_id} [skip ci]"], check=True)
-            subprocess.run(["git", "push"], check=True)
+            print("📤 Fent Git push a la branca 'cdn' (Sense inflar l'historial)...")
+            
+            # Assegurar que no hi ha branques temporals prèvies
+            subprocess.run(["git", "branch", "-D", "cdn_temp"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            
+            # Crear branca òrfena cdn_temp (comença buida, sense arrossegar commits vells)
+            subprocess.run(["git", "checkout", "--orphan", "cdn_temp"], check=True)
+            subprocess.run(["git", "reset"], check=True)
+            
+            # Afegir únicament el nou vídeo MP4
+            rel_mp4_path = os.path.relpath(final_mp4, BASE_DIR)
+            subprocess.run(["git", "add", "-f", rel_mp4_path], check=True)
+            subprocess.run(["git", "commit", "-m", f"CDN Video {video_id} [skip ci]"], check=True)
+            
+            # Push forçat a la branca remota cdn
+            subprocess.run(["git", "push", "-f", "origin", "cdn_temp:cdn"], check=True)
+            
+            # Retornar netament a main i eliminar la branca temporal
+            subprocess.run(["git", "checkout", "-f", "main"], check=True)
+            subprocess.run(["git", "branch", "-D", "cdn_temp"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-            public_video_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/videos/{final_video_filename}"
+            # URL pública directa de la branca 'cdn'
+            public_video_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/cdn/videos/{final_video_filename}"
             print(f"🔗 URL Pública generada: {public_video_url}")
             print("Esperant 8 segons per a la propagació de la CDN de GitHub...")
             time.sleep(8)
         except Exception as e:
-            print(f"⚠️ Avís Git: No s'ha pogut fer push automàtic ({e}).")
+            print(f"⚠️ Avís Git: No s'ha pogut fer push a la branca 'cdn' ({e}).")
+            subprocess.run(["git", "checkout", "-f", "main"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     if not public_video_url:
-        public_video_url = f"https://raw.githubusercontent.com/{GITHUB_REPO or 'user/repo'}/main/videos/{final_video_filename}"
+        public_video_url = f"https://raw.githubusercontent.com/{GITHUB_REPO or 'user/repo'}/cdn/videos/{final_video_filename}"
 
     # 6. Publicar a totes les xarxes socials
     # Instagram & Facebook (Zernio)
