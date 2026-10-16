@@ -1,12 +1,19 @@
-name: Test 3D Spiral Video
+name: Test 3D Spiral Video (15x Parallel)
 
 on:
   workflow_dispatch:
 
 jobs:
-  render_spiral_test:
+  # -------------------------------------------------------------
+  # FASE 1: 15 MÀQUINES RENDERITZANT 12 FOTOGRAMES CADASCUNA
+  # -------------------------------------------------------------
+  render_chunk:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        chunk: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
 
     steps:
       - name: Baixar repositori
@@ -16,29 +23,61 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
-
-      - name: Instal·lar FFmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
       - name: Instal·lar Blender
         run: sudo snap install blender --classic
 
-      - name: Instal·lar dependències Python
-        run: pip install requests numpy
+      - name: Instal·lar dependències
+        run: pip install numpy
 
-      - name: Executar generador 3D
+      - name: Renderitzar tall de fotogrames (Chunk ${{ matrix.chunk }})
         env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          CHUNK_INDEX: ${{ matrix.chunk }}
+          TOTAL_CHUNKS: 15
         run: |
           export PYTHONPATH=$(python -c "import site; print(site.getsitepackages()[0])"):$PYTHONPATH
           blender -b -P generate_spiral.py
 
-      - name: Desar vídeo com a Artifact
-        if: always()
+      - name: Pujar fotogrames d'aquest tall
         uses: actions/upload-artifact@v4
         with:
-          name: video-espiral-test
-          path: output_spiral.mp4
-          if-no-files-found: ignore
+          name: frames-chunk-${{ matrix.chunk }}
+          path: temp_frames/frame_*.png
+          retention-days: 1
+
+  # -------------------------------------------------------------
+  # FASE 2: UNIÓ DE FOTOGRAMES, ÀUDIO I TELEGRAM (15 SEGONS)
+  # -------------------------------------------------------------
+  assemble_and_send:
+    needs: render_chunk
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Baixar repositori
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instal·lar FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Instal·lar dependències
+        run: pip install requests numpy
+
+      - name: Descarregar tots els talls renderitzats
+        uses: actions/download-artifact@v4
+        with:
+          pattern: frames-chunk-*
+          merge-multiple: true
+          path: all_frames
+
+      - name: Acoblar vídeo final i enviar a Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python generate_spiral.py --assemble
