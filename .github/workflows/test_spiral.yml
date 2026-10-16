@@ -36,7 +36,7 @@ jobs:
           TOTAL_CHUNKS: 19
         run: |
           export PYTHONPATH=$(python -c "import site; print(site.getsitepackages()[0])"):$PYTHONPATH
-          blender -b -P generate_spiral.py
+          blender -b -P 3D/generate_spiral.py
 
       - name: Pujar fotogrames d'aquest tall
         uses: actions/upload-artifact@v4
@@ -80,4 +80,4 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          python generate_spiral.py --assemble
+          python 3D/generate_spiral.py --assemble
