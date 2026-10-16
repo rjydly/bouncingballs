@@ -29,36 +29,31 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 # Geometria i dinàmica
 NUM_RINGS = 16
 R_MIN = 0.30
-R_MAX = 3.25        # Mida optimitzada perquè no sobresurti del 9:16
+R_MAX = 3.25
 BALL_RADIUS = 0.062
-BOUNCE_HEIGHT = 1.40
-BOUNCE_FREQ = 0.50   # 0.50 Hz = 1 bot cada 2 segons (molt més lent i pausat)
+BOUNCE_HEIGHT = 1.45
+
+# Cada bot complet (pujar i tocar el terra) dura exactament 1.6 segons
+BOUNCE_DURATION = 1.6
 
 # ==============================================================================
 # 🎨 PALETA DE COLORS ALEATORIS DETERMINISTA (IDENTICA A TOTS ELS RUNNERS)
 # ==============================================================================
-# Seed fixa perquè les 15 màquines comparteixin exactament els mateixos colors aleatoris
 COLOR_SEED = 2026
 rng = np.random.RandomState(COLOR_SEED)
-random_hues = rng.rand(40)  # 40 tonalitats aleatòries
+random_hues = rng.rand(40)
 COLOR_PALETTE = []
 for h in random_hues:
-    # Colors metàl·lics molt saturats i lluminosos
     r, g, b = colorsys.hsv_to_rgb(h, 0.88, 0.95)
     COLOR_PALETTE.append((r, g, b, 1.0))
 
 
 def get_ring_color(ring_idx, phase):
-    """
-    Calcula el color de l'anell segons el cicle de bot.
-    Com que el centre va avançat en fase, el centre canvia de color abans!
-    """
     cycle = max(0.0, phase / math.pi)
     idx0 = int(cycle) % len(COLOR_PALETTE)
     idx1 = (idx0 + 1) % len(COLOR_PALETTE)
     frac = cycle - int(cycle)
     
-    # Transició suau de color durant el vol
     frac_eased = frac * frac * (3.0 - 2.0 * frac)
     c0 = COLOR_PALETTE[idx0]
     c1 = COLOR_PALETTE[idx1]
@@ -70,21 +65,23 @@ def get_ring_color(ring_idx, phase):
 
 
 # ==============================================================================
-# 📐 CÀLCUL MATEMÀTIC DEL MOVIMENT (ONDULACIÓ RÀPIDA A PARTIR DEL 2n BOT)
+# 📐 CÀLCUL MATEMÀTIC DEL MOVIMENT (ONDULACIÓ IMMEDIATA AL 2n BOT)
 # ==============================================================================
 def get_ring_phase_and_height(ring_idx, t):
     u = ring_idx / (NUM_RINGS - 1)  # 0.0 (centre) a 1.0 (vora)
     
-    t_first_bounce = 1.0 / BOUNCE_FREQ  # ~2.0s
-    if t < t_first_bounce:
+    # El 1r bot acaba exactament a t = BOUNCE_DURATION (1.6s)
+    if t < BOUNCE_DURATION:
         wave_dispersion = 0.0
     else:
-        # La dispersió comença immediatament al segon bot i es nota clarament
-        progress = min(1.0, (t - t_first_bounce) / 4.5)
+        # A partir del 2n bot (t >= 1.6s) la dispersió entra ràpidament
+        # Al 2n bot ja es veu clarament la diferència d'alçades
+        progress = min(1.0, (t - BOUNCE_DURATION) / 2.2)
         progress_eased = progress * progress * (3.0 - 2.0 * progress)
         wave_dispersion = progress_eased * math.pi * 1.5
 
-    phase = 2.0 * math.pi * BOUNCE_FREQ * t - (u * wave_dispersion)
+    # Fase matemàtica exacte on cada període complet de bot dura BOUNCE_DURATION
+    phase = (math.pi / BOUNCE_DURATION) * t - (u * wave_dispersion)
     z = BOUNCE_HEIGHT * (abs(math.sin(phase)) ** 1.30)
     return phase, z
 
@@ -93,7 +90,7 @@ def get_ring_phase_and_height(ring_idx, t):
 # 🔔 1. SÍNTESI D'ÀUDIO PER IMPACTES
 # ==============================================================================
 def generate_chimes_audio(duration_sec, output_wav):
-    print("🎵 Sintetitzant àudio sincronitzat amb els impactes lents...")
+    print("🎵 Sintetitzant àudio sincronitzat amb els impactes...")
     SAMPLE_RATE = 44100
     n_samples = int(duration_sec * SAMPLE_RATE)
     audio = np.zeros(n_samples, dtype=np.float32)
@@ -186,20 +183,20 @@ def render_chunk():
     scene.render.image_settings.file_format = 'PNG'
     scene.render.image_settings.color_mode = 'RGB'
 
-    # CÀMERA CORREGIDA: Allunyada per encabir el cercle sencer en vertical 9:16
+    # CÀMERA SIGNIFICATIVAMENT MÉS LLUNY: Pedestal complet amb marge ampli
     cam_data = bpy.data.cameras.new("Camera")
     cam = bpy.data.objects.new("Camera", cam_data)
     scene.collection.objects.link(cam)
     scene.camera = cam
-    cam.location = (0, -14.2, 10.5)
+    cam.location = (0, -17.5, 13.0)
     cam.rotation_euler = (math.radians(53), 0, 0)
 
     # Llums
     light_data = bpy.data.lights.new(name="MainLight", type='AREA')
-    light_data.energy = 550
-    light_data.size = 10.0
+    light_data.energy = 650
+    light_data.size = 12.0
     light = bpy.data.objects.new("MainLight", light_data)
-    light.location = (0, -1.0, 10.0)
+    light.location = (0, -1.0, 13.0)
     scene.collection.objects.link(light)
 
     # Materials del terra
@@ -215,7 +212,7 @@ def render_chunk():
     bsdf_b.inputs["Metallic"].default_value = 0.90
     bsdf_b.inputs["Roughness"].default_value = 0.15
 
-    # Pedestal / Terra rígid visible (encaixa al 100% a la pantalla)
+    # Pedestal / Terra rígid visible
     bpy.ops.mesh.primitive_cylinder_add(
         vertices=64,
         radius=R_MAX + 0.35,
@@ -235,12 +232,11 @@ def render_chunk():
     ring_border = bpy.context.active_object
     ring_border.data.materials.append(mat_border)
 
-    # CREACIÓ D'UN MATERIAL I OBJECTE PER A CADA ANELL PER CONTROLAR EL COLOR INDIVIDUALMENT
+    # Sistemes d'anells
     ring_radii = np.linspace(R_MIN, R_MAX, NUM_RINGS)
     ring_systems = []
 
     for ring_i, r in enumerate(ring_radii):
-        # Material propi per anell per permetre onades de color independents
         mat_ring = bpy.data.materials.new(f"Mat_Ring_{ring_i}")
         bsdf_r = mat_ring.node_tree.nodes.get("Principled BSDF")
         bsdf_r.inputs["Metallic"].default_value = 0.85
@@ -283,7 +279,7 @@ def render_chunk():
             ring_i = sys_data["idx"]
             phase, z = get_ring_phase_and_height(ring_i, t)
             
-            # 1. Actualitza posició z de les boles
+            # Actualitzar coordenades z
             coords = np.column_stack((
                 sys_data["rx"],
                 sys_data["ry"],
@@ -292,7 +288,7 @@ def render_chunk():
             sys_data["mesh"].vertices.foreach_set("co", coords)
             sys_data["mesh"].update()
 
-            # 2. Actualitza color: el centre va més avançat que les vores!
+            # Actualitzar color amb desfasament concèntric
             color = get_ring_color(ring_i, phase)
             sys_data["bsdf"].inputs["Base Color"].default_value = color
 
@@ -313,10 +309,10 @@ def send_telegram_video(video_path):
     print("📲 TEST_MODE=True: Enviant vídeo a Telegram...")
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVideo"
     caption = (
-        "✨ <b>BOUNCELAB 3D - COLOR WAVES & FIT VERTICAL</b>\n\n"
-        "📱 <b>Format:</b> Enquadrat al 100% dins del format 9:16 sense talls\n"
-        "🌈 <b>Colors:</b> Paleta de colors aleatòria amb onada de color avançada al centre\n"
-        "⚡ <b>Ritme:</b> Lent (0.50 Hz) amb dispersió visible a partir del 2n bot"
+        "✨ <b>BOUNCELAB 3D - CÀMERA AMPLA I DISPERSIÓ RÀPIDA</b>\n\n"
+        "🔭 <b>Càmera:</b> Enquadrament panoràmic amb ampli marge perimetral\n"
+        "⚡ <b>Transició:</b> 1r bot pla a l'uníson -> 2n bot ja es veu i se sent clarament l'ona\n"
+        "🌈 <b>Colors:</b> Onades de color concèntriques que s'escampen des del centre"
     )
 
     try:
