@@ -2,72 +2,96 @@ import os
 import sys
 import math
 import wave
+import json
 import shutil
 import subprocess
 import requests
 import numpy as np
 
 # ==============================================================================
-# ⚙️ CONFIGURACIÓ PRINCIPAL (EDITA AQUÍ DIRECTAMENT)
+# ⚙️ CONFIGURACIÓ PRINCIPAL I VARIACIONS (EDITA AQUÍ DIRECTAMENT)
 # ==============================================================================
 TEST_MODE = True  # 👉 True (envia a Telegram) | False (no fa res)
+
+# VARIACIÓ D'IMPACTE:
+# "vertical" -> Caiguda lliure vertical des de dalt (Vídeo clàssic)
+# "ramp"     -> Tobogan / Rampa corbada lateral per a xoc horitzontal tipus bitlles
+IMPACT_MODE = "vertical"
 
 OUTPUT_VIDEO = "output_pyramid.mp4"
 FRAMES_DIR = "temp_frames"
 ASSEMBLE_DIR = "all_frames"
 TEMP_AUDIO = "temp_impacts.wav"
-BAKED_BLEND = "pyramid_baked.blend"
+EVENTS_JSON = "impact_events.json"
 
 FPS = 30
-ROUND_FRAMES = 210  # 7 segons per ronda (4 rondes = 28 segons = 840 frames)
-TOTAL_FRAMES = ROUND_FRAMES * 4
+CLIP_FRAMES = 210   # 7 segons per clip
+NUM_CLIPS = 4       # 1kg, 10kg, 100kg, 1000kg
+TOTAL_FRAMES = CLIP_FRAMES * NUM_CLIPS  # 840 fotogrames (28s exactes)
+
 WIDTH = 720
 HEIGHT = 1280
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-PYRAMID_LAYERS = 14  # 1.015 cubs sòlids
+PYRAMID_LAYERS = 14  # 1.015 blocs
 CUBE_SIZE = 0.20
 
-# Configuració de les 4 rondes (cadascuna amb piràmide neta)
-ROUNDS_CONFIG = [
-    {"label": "1 kg",    "mass": 1.0,    "radius": 0.22, "hit_time": 1.5},
-    {"label": "10 kg",   "mass": 10.0,   "radius": 0.36, "hit_time": 8.5},
-    {"label": "100 kg",  "mass": 100.0,  "radius": 0.58, "hit_time": 15.5},
-    {"label": "1000 kg", "mass": 1000.0, "radius": 0.90, "hit_time": 22.5},
+CLIPS_CONFIG = [
+    {"label": "1kg",    "mass": 1.0,    "radius": 0.20, "is_marble": True},
+    {"label": "10kg",   "mass": 10.0,   "radius": 0.35, "is_marble": False},
+    {"label": "100kg",  "mass": 100.0,  "radius": 0.55, "is_marble": False},
+    {"label": "1000kg", "mass": 1000.0, "radius": 0.85, "is_marble": False},
 ]
 
 
 # ==============================================================================
-# 💥 1. SÍNTESI D'ÀUDIO PROCEDURAL DELS 4 IMPACTES
+# 🔔 1. SÍNTESI D'ÀUDIO ASMR (CANICA CRISTAL·LINA + RUNES PESADES)
 # ==============================================================================
-def generate_impacts_audio(duration_sec, output_wav):
-    print("🎵 Sintetitzant sons d'impacte contundents...")
+def synthesize_audio(duration_sec, output_wav, events):
+    print("🎵 Sintetitzant àudio ASMR de canica i runes...")
     SAMPLE_RATE = 44100
     n_samples = int(duration_sec * SAMPLE_RATE)
     audio = np.zeros(n_samples, dtype=np.float32)
 
-    impact_profiles = [
-        {"time": 1.5,  "sub_freq": 110.0, "decay": 10.0, "noise_amt": 0.35, "vol": 0.50},  # 1kg
-        {"time": 8.5,  "sub_freq": 72.0,  "decay": 5.5,  "noise_amt": 0.55, "vol": 0.75},  # 10kg
-        {"time": 15.5, "sub_freq": 50.0,  "decay": 3.2,  "noise_amt": 0.75, "vol": 0.95},  # 100kg
-        {"time": 22.5, "sub_freq": 36.0,  "decay": 2.0,  "noise_amt": 0.95, "vol": 1.15},  # 1000kg
-    ]
+    for ev in events:
+        t_hit = ev["time"]
+        sound_type = ev["type"]  # "marble" o "heavy"
+        intensity = min(1.0, max(0.15, ev.get("intensity", 0.5)))
+        start_idx = int(t_hit * SAMPLE_RATE)
 
-    for p in impact_profiles:
-        start = int(p["time"] * SAMPLE_RATE)
-        dur = min(4.0, duration_sec - p["time"])
-        n_note = int(dur * SAMPLE_RATE)
-        t = np.linspace(0, dur, n_note, False)
+        if start_idx >= n_samples:
+            continue
 
-        sub_boom = np.sin(2 * np.pi * p["sub_freq"] * t) * np.exp(-p["decay"] * t)
-        noise = (np.random.rand(n_note) * 2.0 - 1.0) * np.exp(-p["decay"] * 0.75 * t)
-        
-        sound = (sub_boom * 0.7 + noise * p["noise_amt"]) * p["vol"]
-        audio[start : start + n_note] += sound
+        if sound_type == "marble":
+            # So agut i cristal·lí de canica rebotant per un esglaó (2.400 - 3.200 Hz)
+            dur = 0.12
+            n_note = min(int(dur * SAMPLE_RATE), n_samples - start_idx)
+            t = np.linspace(0, dur, n_note, False)
+            freq = 2800.0 + np.random.uniform(-400.0, 400.0)
 
-    audio = np.tanh(audio * 1.3)
+            # To cristal·lí inharmònic amb caiguda ràpida
+            marble_clink = (
+                0.70 * np.sin(2 * np.pi * freq * t) +
+                0.25 * np.sin(2 * np.pi * (freq * 2.76) * t) +
+                0.05 * (np.random.rand(n_note) * 2 - 1)
+            ) * np.exp(-48.0 * t)
+
+            audio[start_idx : start_idx + n_note] += marble_clink * intensity * 0.65
+
+        else:
+            # Impacte greu de destrucció pesada
+            dur = 2.5
+            n_note = min(int(dur * SAMPLE_RATE), n_samples - start_idx)
+            t = np.linspace(0, dur, n_note, False)
+            sub_freq = ev.get("sub_freq", 60.0)
+
+            boom = np.sin(2 * np.pi * sub_freq * t) * np.exp(-4.5 * t)
+            crunch = (np.random.rand(n_note) * 2 - 1) * np.exp(-5.5 * t)
+            audio[start_idx : start_idx + n_note] += (boom * 0.75 + crunch * 0.55) * intensity
+
+    audio = np.tanh(audio * 1.35)
     max_amp = np.max(np.abs(audio))
     if max_amp > 0:
         audio = (audio / max_amp) * 31500
@@ -81,215 +105,222 @@ def generate_impacts_audio(duration_sec, output_wav):
 
 
 # ==============================================================================
-# 🏗️ 2. SIMULACIÓ FÍSICA PER RONDES AMB REINICI DE PIRÀMIDE
+# 🏗️ 2. SIMULACIÓ FÍSICA DELS 4 CLIPS INDEPENDENTS (PAS 1)
 # ==============================================================================
-def simulate_single_round(mass, radius):
-    """Simula una ronda de 7 segons (210 fotogrames) amb piràmide neta."""
+def simulate_all_clips():
     import bpy
 
-    bpy.ops.wm.read_factory_settings(use_empty=True)
-    scene = bpy.context.scene
-    scene.frame_start = 1
-    scene.frame_end = ROUND_FRAMES
-    scene.render.fps = FPS
+    all_events = []
+    print(f"🎬 Iniciant simulació de 4 clips aïllats (Mode: {IMPACT_MODE.upper()})...")
 
-    bpy.ops.rigidbody.world_add()
-    scene.rigidbody_world.point_cache.frame_start = 1
-    scene.rigidbody_world.point_cache.frame_end = ROUND_FRAMES
-    scene.rigidbody_world.substeps_per_frame = 10
-    scene.rigidbody_world.solver_iterations = 10
-    scene.gravity = (0, 0, -8.2)
+    for clip_idx, config in enumerate(CLIPS_CONFIG):
+        print(f"\n--- 🔨 Simulant Clip #{clip_idx} ({config['label']}) ---")
+        bpy.ops.wm.read_factory_settings(use_empty=True)
+        scene = bpy.context.scene
 
-    # Terra
-    bpy.ops.mesh.primitive_cube_add(size=20.0, location=(0, 0, -10.0))
-    ground = bpy.context.active_object
-    bpy.ops.rigidbody.object_add()
-    ground.rigid_body.type = 'PASSIVE'
-    ground.rigid_body.collision_shape = 'BOX'
-    ground.rigid_body.friction = 0.8
+        scene.frame_start = 1
+        scene.frame_end = CLIP_FRAMES
+        scene.render.fps = FPS
 
-    # Construir piràmide neta
-    cubes = []
-    cube_init_pos = []
-    for layer_k in range(PYRAMID_LAYERS):
-        num_per_side = layer_k + 1
-        z = (PYRAMID_LAYERS - 1 - layer_k) * CUBE_SIZE + (CUBE_SIZE / 2.0)
-        offset = ((num_per_side - 1) * CUBE_SIZE) / 2.0
+        if not scene.rigidbody_world:
+            bpy.ops.rigidbody.world_add()
+        scene.rigidbody_world.point_cache.frame_start = 1
+        scene.rigidbody_world.point_cache.frame_end = CLIP_FRAMES
+        scene.rigidbody_world.substeps_per_frame = 10
+        scene.rigidbody_world.solver_iterations = 10
 
-        for ix in range(num_per_side):
-            for iy in range(num_per_side):
-                x = ix * CUBE_SIZE - offset
-                y = iy * CUBE_SIZE - offset
+        # Materials
+        mat_block = bpy.data.materials.new("BlockMat")
+        bsdf_b = mat_block.node_tree.nodes.get("Principled BSDF")
+        bsdf_b.inputs["Base Color"].default_value = (0.50, 0.32, 0.17, 1.0)
+        bsdf_b.inputs["Roughness"].default_value = 0.75
 
-                bpy.ops.mesh.primitive_cube_add(size=CUBE_SIZE * 0.98, location=(x, y, z))
-                c = bpy.context.active_object
-                bpy.ops.rigidbody.object_add()
-                c.rigid_body.type = 'ACTIVE'
-                c.rigid_body.collision_shape = 'BOX'
-                c.rigid_body.mass = 0.35
-                c.rigid_body.friction = 0.70
-                c.rigid_body.use_deactivation = True
-                cubes.append(c)
-                cube_init_pos.append((x, y, z))
+        mat_chrome = bpy.data.materials.new("ChromeBallMat")
+        bsdf_c = mat_chrome.node_tree.nodes.get("Principled BSDF")
+        bsdf_c.inputs["Base Color"].default_value = (0.95, 0.95, 0.95, 1.0)
+        bsdf_c.inputs["Metallic"].default_value = 1.0
+        bsdf_c.inputs["Roughness"].default_value = 0.05
 
-    # Bola de la ronda
-    drop_z = (PYRAMID_LAYERS * CUBE_SIZE) + 4.5 + radius
-    bpy.ops.mesh.primitive_uv_sphere_add(radius=radius, location=(0, 0, drop_z))
-    ball = bpy.context.active_object
-    bpy.ops.rigidbody.object_add()
-    ball.rigid_body.type = 'ACTIVE'
-    ball.rigid_body.collision_shape = 'SPHERE'
-    ball.rigid_body.mass = mass
-    ball.rigid_body.friction = 0.4
+        mat_floor = bpy.data.materials.new("GroundMat")
+        bsdf_f = mat_floor.node_tree.nodes.get("Principled BSDF")
+        bsdf_f.inputs["Base Color"].default_value = (0.07, 0.08, 0.10, 1.0)
+        bsdf_f.inputs["Roughness"].default_value = 0.40
 
-    # Simular física de la ronda
-    for f in range(1, ROUND_FRAMES + 1):
-        scene.frame_set(f)
+        mat_text = bpy.data.materials.new("TextMat")
+        bsdf_t = mat_text.node_tree.nodes.get("Principled BSDF")
+        bsdf_t.inputs["Base Color"].default_value = (1.0, 1.0, 1.0, 1.0)
+        if "Emission Color" in bsdf_t.inputs:
+            bsdf_t.inputs["Emission Color"].default_value = (1.0, 1.0, 1.0, 1.0)
+            bsdf_t.inputs["Emission Strength"].default_value = 1.5
 
-    # Extreure dades simulades
-    cube_anim = []
-    ball_anim = []
-    for f in range(1, ROUND_FRAMES + 1):
-        scene.frame_set(f)
-        f_cubes = [(c.matrix_world.translation.copy(), c.matrix_world.to_euler().copy()) for c in cubes]
-        cube_anim.append(f_cubes)
-        ball_anim.append((ball.matrix_world.translation.copy(), ball.matrix_world.to_euler().copy()))
+        # 1. Terra passiu rígid
+        bpy.ops.mesh.primitive_cube_add(size=20.0, location=(0, 0, -10.0))
+        ground = bpy.context.active_object
+        ground.data.materials.append(mat_floor)
+        bpy.ops.rigidbody.object_add()
+        ground.rigid_body.type = 'PASSIVE'
+        ground.rigid_body.collision_shape = 'BOX'
+        ground.rigid_body.friction = 0.8
 
-    return cube_anim, ball_anim, cube_init_pos
+        # 2. Piràmide intacta de 1.015 cubs
+        active_cubes = []
+        for layer_k in range(PYRAMID_LAYERS):
+            num_per_side = layer_k + 1
+            z = (PYRAMID_LAYERS - 1 - layer_k) * CUBE_SIZE + (CUBE_SIZE / 2.0)
+            offset = ((num_per_side - 1) * CUBE_SIZE) / 2.0
 
+            for ix in range(num_per_side):
+                for iy in range(num_per_side):
+                    x = ix * CUBE_SIZE - offset
+                    y = iy * CUBE_SIZE - offset
 
-def simulate_physics():
-    import bpy
+                    bpy.ops.mesh.primitive_cube_add(size=CUBE_SIZE * 0.98, location=(x, y, z))
+                    cube = bpy.context.active_object
+                    cube.data.materials.append(mat_block)
+                    
+                    bpy.ops.rigidbody.object_add()
+                    cube.rigid_body.type = 'ACTIVE'
+                    cube.rigid_body.collision_shape = 'BOX'
+                    cube.rigid_body.mass = 0.40
+                    cube.rigid_body.friction = 0.70
+                    cube.rigid_body.use_deactivation = True
+                    active_cubes.append(cube)
 
-    print("🔨 Simulant les 4 rondes de destrucció independentment...")
-    sim_data = []
-    init_positions = None
+        # 3. La bola del clip concret
+        ball_r = config["radius"]
+        if IMPACT_MODE == "ramp":
+            # Posició dalt de la rampa acceleradora lateral
+            ball_start_pos = (-4.0, 0.0, 5.0)
+            # Rampa corbada de llançament
+            bpy.ops.mesh.primitive_cube_add(size=1.0, location=(-2.6, 0.0, 2.8))
+            ramp = bpy.context.active_object
+            ramp.scale = (3.2, 1.6, 0.15)
+            ramp.rotation_euler = (0, math.radians(35), 0)
+            ramp.data.materials.append(mat_floor)
+            bpy.ops.rigidbody.object_add()
+            ramp.rigid_body.type = 'PASSIVE'
+            ramp.rigid_body.collision_shape = 'BOX'
+            ramp.rigid_body.friction = 0.05  # Molt lliscant per agafar velocitat
+        else:
+            # Caiguda lliure vertical des de dalt
+            apex_z = PYRAMID_LAYERS * CUBE_SIZE
+            ball_start_pos = (0.0, 0.0, apex_z + 2.5 + ball_r * 1.5)
 
-    for idx, r_conf in enumerate(ROUNDS_CONFIG):
-        print(f"  -> Simulant xoc de {r_conf['label']} (massa {r_conf['mass']} kg)...")
-        c_anim, b_anim, c_init = simulate_single_round(r_conf["mass"], r_conf["radius"])
-        sim_data.append((c_anim, b_anim, r_conf["radius"]))
-        if init_positions is None:
-            init_positions = c_init
+        bpy.ops.mesh.primitive_uv_sphere_add(radius=ball_r, segments=32, ring_count=16, location=ball_start_pos)
+        ball = bpy.context.active_object
+        ball.name = f"Ball_{config['label']}"
+        ball.data.materials.append(mat_chrome)
+        bpy.ops.object.shade_smooth()
 
-    print("🎬 Construint escena definitiva combinada amb piràmide reiniciada...")
-    bpy.ops.wm.read_factory_settings(use_empty=True)
-    scene = bpy.context.scene
-    scene.frame_start = 1
-    scene.frame_end = TOTAL_FRAMES
-    scene.render.fps = FPS
+        bpy.ops.rigidbody.object_add()
+        ball.rigid_body.type = 'ACTIVE'
+        ball.rigid_body.collision_shape = 'SPHERE'
+        ball.rigid_body.mass = config["mass"]
+        ball.rigid_body.friction = 0.35
 
-    # Materials
-    mat_block = bpy.data.materials.new("BlockMat")
-    bsdf_b = mat_block.node_tree.nodes.get("Principled BSDF")
-    bsdf_b.inputs["Base Color"].default_value = (0.50, 0.32, 0.17, 1.0)
-    bsdf_b.inputs["Roughness"].default_value = 0.75
+        # 4. Text 3D flotant ("1kg", "10kg", etc.)
+        bpy.ops.object.text_add(location=(0, -0.6, 6.0))
+        txt_obj = bpy.context.active_object
+        txt_obj.name = f"Text_{config['label']}"
+        txt_obj.data.body = config["label"]
+        txt_obj.data.align_x = 'CENTER'
+        txt_obj.data.size = 0.72
+        txt_obj.data.materials.append(mat_text)
+        txt_obj.rotation_euler = (math.radians(90), 0, 0)
 
-    mat_chrome = bpy.data.materials.new("ChromeBallMat")
-    bsdf_c = mat_chrome.node_tree.nodes.get("Principled BSDF")
-    bsdf_c.inputs["Base Color"].default_value = (0.95, 0.95, 0.95, 1.0)
-    bsdf_c.inputs["Metallic"].default_value = 1.0
-    bsdf_c.inputs["Roughness"].default_value = 0.05
+        # 5. Càmera i Il·luminació
+        cam_data = bpy.data.cameras.new("Camera")
+        cam = bpy.data.objects.new("Camera", cam_data)
+        scene.collection.objects.link(cam)
+        scene.camera = cam
+        cam.location = (0, -11.0, 7.2)
+        cam.rotation_euler = (math.radians(62), 0, 0)
 
-    mat_floor = bpy.data.materials.new("GroundMat")
-    bsdf_f = mat_floor.node_tree.nodes.get("Principled BSDF")
-    bsdf_f.inputs["Base Color"].default_value = (0.07, 0.08, 0.10, 1.0)
-    bsdf_f.inputs["Roughness"].default_value = 0.40
+        light_data = bpy.data.lights.new(name="SunLight", type='SUN')
+        light_data.energy = 4.5
+        light = bpy.data.objects.new("SunLight", light_data)
+        light.rotation_euler = (math.radians(45), math.radians(25), math.radians(-30))
+        scene.collection.objects.link(light)
 
-    # Terra
-    bpy.ops.mesh.primitive_cube_add(size=20.0, location=(0, 0, -10.0))
-    ground = bpy.context.active_object
-    ground.data.materials.append(mat_floor)
+        # 6. Simulació i captura de keyframes
+        clip_blend = f"clip_{clip_idx}.blend"
+        bpy.ops.wm.save_as_mainfile(filepath=clip_blend)
+        try:
+            bpy.ops.ptcache.bake_all(bake=True)
+        except Exception:
+            pass
 
-    # Cubs de la piràmide
-    scene_cubes = []
-    for pos in init_positions:
-        bpy.ops.mesh.primitive_cube_add(size=CUBE_SIZE * 0.98, location=pos)
-        cube_obj = bpy.context.active_object
-        cube_obj.data.materials.append(mat_block)
-        scene_cubes.append(cube_obj)
+        init_states = {cube.name: (cube.location.copy(), cube.rotation_euler.copy()) for cube in active_cubes}
+        has_moved = {cube.name: False for cube in active_cubes}
 
-    # Bola única
-    bpy.ops.mesh.primitive_uv_sphere_add(radius=1.0, location=(0, 0, 15.0))
-    ball_obj = bpy.context.active_object
-    ball_obj.data.materials.append(mat_chrome)
-    bpy.ops.object.shade_smooth()
+        prev_ball_z = ball_start_pos[2]
+        prev_vz = 0.0
 
-    # Càmera
-    cam_data = bpy.data.cameras.new("Camera")
-    cam = bpy.data.objects.new("Camera", cam_data)
-    scene.collection.objects.link(cam)
-    scene.camera = cam
-    cam.location = (0, -11.5, 7.5)
-    cam.rotation_euler = (math.radians(60), 0, 0)
+        for f in range(1, CLIP_FRAMES + 1):
+            scene.frame_set(f)
+            t_global = (clip_idx * CLIP_FRAMES + (f - 1)) / FPS
 
-    # Il·luminació
-    light_data = bpy.data.lights.new(name="MainLight", type='AREA')
-    light_data.energy = 750
-    light_data.size = 12.0
-    light = bpy.data.objects.new("MainLight", light_data)
-    light.location = (0, -1.0, 12.0)
-    scene.collection.objects.link(light)
+            # Trajectòria de la bola
+            ball.location = ball.matrix_world.translation.copy()
+            ball.rotation_euler = ball.matrix_world.to_euler()
+            ball.keyframe_insert(data_path="location", frame=f)
+            ball.keyframe_insert(data_path="rotation_euler", frame=f)
 
-    fill_data = bpy.data.lights.new(name="FillLight", type='AREA')
-    fill_data.energy = 200
-    fill_data.size = 8.0
-    fill = bpy.data.objects.new("FillLight", fill_data)
-    fill.location = (0, -8.0, 5.0)
-    scene.collection.objects.link(fill)
+            # Detecció de contactes / bots per al so ASMR
+            cur_ball_z = ball.location.z
+            vz = (cur_ball_z - prev_ball_z) * FPS
+            delta_vz = vz - prev_vz
 
-    # Gravar keyframes a l'escena
-    print("⏳ Gravant keyframes a l'escena (reinici net a cada pes)...")
-    for r_idx in range(4):
-        c_anim, b_anim, b_rad = sim_data[r_idx]
-        base_f = r_idx * ROUND_FRAMES
+            # Si hi ha una desacceleració vertical brusca (xoc contra un esglaó)
+            if delta_vz > 1.2 and cur_ball_z < 3.8:
+                intensity = min(1.0, delta_vz / 6.0)
+                if config["is_marble"]:
+                    all_events.append({
+                        "time": t_global,
+                        "type": "marble",
+                        "intensity": intensity
+                    })
+                elif f == 26:  # Impacte principal per a pesos grans
+                    sub_f = 90.0 if config["label"] == "10kg" else (55.0 if config["label"] == "100kg" else 35.0)
+                    all_events.append({
+                        "time": t_global,
+                        "type": "heavy",
+                        "intensity": 1.0,
+                        "sub_freq": sub_f
+                    })
 
-        ball_obj.scale = (b_rad, b_rad, b_rad)
-        ball_obj.keyframe_insert("scale", frame=base_f + 1)
+            prev_ball_z = cur_ball_z
+            prev_vz = vz
 
-        has_moved_cube = [False] * len(scene_cubes)
+            # Cubs: només keyframegem els que reben un impacte real
+            for cube in active_cubes:
+                cur_loc = cube.matrix_world.translation.copy()
+                cur_rot = cube.matrix_world.to_euler()
 
-        for local_f in range(ROUND_FRAMES):
-            global_f = base_f + local_f + 1
-
-            # Posició de la bola
-            b_loc, b_rot = b_anim[local_f]
-            ball_obj.location = b_loc
-            ball_obj.rotation_euler = b_rot
-            ball_obj.keyframe_insert("location", frame=global_f)
-            ball_obj.keyframe_insert("rotation_euler", frame=global_f)
-
-            # Posició dels cubs amb math.dist() corregit
-            for c_i, c_obj in enumerate(scene_cubes):
-                c_loc, c_rot = c_anim[local_f][c_i]
-                init_p = init_positions[c_i]
-
-                if not has_moved_cube[c_i]:
-                    diff = math.dist(tuple(c_loc), init_p)
+                if not has_moved[cube.name]:
+                    diff = (cur_loc - init_states[cube.name][0]).length
                     if diff > 0.015:
-                        has_moved_cube[c_i] = True
-                        if local_f > 0:
-                            c_obj.location = init_p
-                            c_obj.rotation_euler = (0, 0, 0)
-                            c_obj.keyframe_insert("location", frame=global_f - 1)
-                            c_obj.keyframe_insert("rotation_euler", frame=global_f - 1)
+                        has_moved[cube.name] = True
+                        if f > 1:
+                            cube.location = init_states[cube.name][0]
+                            cube.rotation_euler = init_states[cube.name][1]
+                            cube.keyframe_insert(data_path="location", frame=f - 1)
+                            cube.keyframe_insert(data_path="rotation_euler", frame=f - 1)
 
-                if has_moved_cube[c_i]:
-                    c_obj.location = c_loc
-                    c_obj.rotation_euler = c_rot
-                    c_obj.keyframe_insert("location", frame=global_f)
-                    c_obj.keyframe_insert("rotation_euler", frame=global_f)
+                if has_moved[cube.name]:
+                    cube.location = cur_loc
+                    cube.rotation_euler = cur_rot
+                    cube.keyframe_insert(data_path="location", frame=f)
+                    cube.keyframe_insert(data_path="rotation_euler", frame=f)
 
-        for c_i, c_obj in enumerate(scene_cubes):
-            if not has_moved_cube[c_i]:
-                c_obj.location = init_positions[c_i]
-                c_obj.rotation_euler = (0, 0, 0)
-                c_obj.keyframe_insert("location", frame=base_f + 1)
-                c_obj.keyframe_insert("rotation_euler", frame=base_f + 1)
+        bpy.ops.rigidbody.world_remove()
+        bpy.ops.wm.save_as_mainfile(filepath=clip_blend, compress=True)
+        print(f"✅ Clip #{clip_idx} congelat a {clip_blend}")
 
-    print(f"💾 Desant escena congelada a {BAKED_BLEND}...")
-    bpy.ops.wm.save_as_mainfile(filepath=BAKED_BLEND, compress=True)
-    print("✅ Simulació per rondes completada amb èxit!")
+    # Guardar els esdeveniments sonors detectats
+    with open(EVENTS_JSON, "w") as jf:
+        json.dump(all_events, jf)
+    print("✅ Esdeveniments sonors desats correctament!")
 
 
 # ==============================================================================
@@ -299,39 +330,50 @@ def render_chunk(chunk_idx, total_chunks):
     import bpy
 
     frames_per_chunk = math.ceil(TOTAL_FRAMES / total_chunks)
-    start_frame = chunk_idx * frames_per_chunk + 1
-    end_frame = min(TOTAL_FRAMES, (chunk_idx + 1) * frames_per_chunk)
+    start_global = chunk_idx * frames_per_chunk + 1
+    end_global = min(TOTAL_FRAMES, (chunk_idx + 1) * frames_per_chunk)
 
-    print(f"🎬 Runner #{chunk_idx}: renderitzant fotogrames {start_frame} a {end_frame}...")
+    print(f"🎬 Runner #{chunk_idx}: processant fotogrames globals {start_global} a {end_global}...")
     os.makedirs(FRAMES_DIR, exist_ok=True)
-    scene = bpy.context.scene
 
-    scene.render.fps = FPS
-    scene.render.resolution_x = WIDTH
-    scene.render.resolution_y = HEIGHT
+    # Renderitzar obrint directament el clip .blend corresponent
+    current_loaded_clip = None
 
-    scene.render.engine = 'CYCLES'
-    scene.cycles.device = 'CPU'
-    scene.cycles.samples = 4
-    scene.cycles.use_denoising = True
-    scene.cycles.max_bounces = 1
-    scene.cycles.diffuse_bounces = 1
-    scene.cycles.glossy_bounces = 1
-    scene.cycles.transmission_bounces = 0
-    scene.cycles.transparent_max_bounces = 0
-    scene.cycles.volume_bounces = 0
-    if hasattr(scene.cycles, "use_light_tree"):
-        scene.cycles.use_light_tree = False
+    for global_f in range(start_global, end_global + 1):
+        clip_idx = (global_f - 1) // CLIP_FRAMES
+        local_f = ((global_f - 1) % CLIP_FRAMES) + 1
+        clip_blend = f"clip_{clip_idx}.blend"
 
-    scene.render.image_settings.file_format = 'PNG'
-    scene.render.image_settings.color_mode = 'RGB'
+        if current_loaded_clip != clip_blend:
+            bpy.ops.wm.open_mainfile(filepath=clip_blend)
+            current_loaded_clip = clip_blend
 
-    for frame in range(start_frame, end_frame + 1):
-        scene.frame_set(frame)
-        scene.render.filepath = os.path.join(FRAMES_DIR, f"frame_{frame:04d}.png")
+            scene = bpy.context.scene
+            scene.render.fps = FPS
+            scene.render.resolution_x = WIDTH
+            scene.render.resolution_y = HEIGHT
+            scene.render.engine = 'CYCLES'
+            scene.cycles.device = 'CPU'
+            scene.cycles.samples = 4
+            scene.cycles.use_denoising = True
+            scene.cycles.max_bounces = 1
+            scene.cycles.diffuse_bounces = 1
+            scene.cycles.glossy_bounces = 1
+            scene.cycles.transmission_bounces = 0
+            scene.cycles.transparent_max_bounces = 0
+            scene.cycles.volume_bounces = 0
+            if hasattr(scene.cycles, "use_light_tree"):
+                scene.cycles.use_light_tree = False
+            scene.render.image_settings.file_format = 'PNG'
+            scene.render.image_settings.color_mode = 'RGB'
+
+        scene = bpy.context.scene
+        scene.frame_set(local_f)
+        scene.render.filepath = os.path.join(FRAMES_DIR, f"frame_{global_f:04d}.png")
         bpy.ops.render.render(write_still=True)
-        if frame % 15 == 0 or frame == end_frame:
-            print(f"  [Chunk {chunk_idx}] Frame {frame}/{TOTAL_FRAMES} enllestit.")
+
+        if global_f % 15 == 0 or global_f == end_global:
+            print(f"  [Chunk {chunk_idx}] Frame {global_f}/{TOTAL_FRAMES} enllestit.")
 
 
 # ==============================================================================
@@ -342,13 +384,13 @@ def send_telegram_video(video_path):
         print("⚠️ Falten secrets de Telegram.")
         return
 
-    print("📲 TEST_MODE=True: Enviant vídeo de la piràmide a Telegram...")
+    print("📲 TEST_MODE=True: Enviant vídeo a Telegram...")
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVideo"
     caption = (
-        "💥 <b>BOUNCELAB 3D - DESTRUCCIÓ DE PIRÀMIDE PER RONDES</b>\n\n"
-        "🧱 <b>Format:</b> Piràmide neta a cada nou pes (4 rondes de 7s)\n"
-        "⚖️ <b>Pesos:</b> 1kg → 10kg → 100kg → 1.000kg amb text 2D nítid\n"
-        "🔊 <b>So:</b> Terrabastall sincronitzat a cada impacte"
+        "💥 <b>BOUNCELAB 3D - CLIPS AÏLLATS I SO DE CANICA ASMR</b>\n\n"
+        "✨ <b>Estructura:</b> 4 clips completament nets i independents\n"
+        "🔮 <b>Àudio:</b> So cristal·lí de canica en rodolar pels esglaons + xoc greu\n"
+        "⚖️ <b>Pesos:</b> 1kg → 10kg → 100kg → 1.000kg"
     )
 
     try:
@@ -373,30 +415,18 @@ def send_telegram_video(video_path):
 
 
 # ==============================================================================
-# 🎬 5. ACOBLAMENT FINAL AMB TEXT 2D NÍTID (FFMPEG)
+# 🎬 5. ACOBLAMENT FINAL (PAS 3)
 # ==============================================================================
 def assemble_final_video():
-    print("⚡ Unint els 840 fotogrames i afegint text 2D...")
+    print("⚡ Unint els 840 fotogrames i sintetitzant l'àudio ASMR...")
     duration = TOTAL_FRAMES / FPS
-    generate_impacts_audio(duration, TEMP_AUDIO)
 
-    font_candidates = [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
-    ]
-    font_arg = ""
-    for f in font_candidates:
-        if os.path.exists(f):
-            font_arg = f":fontfile='{f}'"
-            break
+    events = []
+    if os.path.exists(EVENTS_JSON):
+        with open(EVENTS_JSON, "r") as jf:
+            events = json.load(jf)
 
-    vf_filter = (
-        f"drawtext=text='1 kg':enable='between(t,0,7)'{font_arg}:fontsize=80:fontcolor=white:borderw=5:bordercolor=black@0.85:x=(w-text_w)/2:y=130,"
-        f"drawtext=text='10 kg':enable='between(t,7,14)'{font_arg}:fontsize=80:fontcolor=white:borderw=5:bordercolor=black@0.85:x=(w-text_w)/2:y=130,"
-        f"drawtext=text='100 kg':enable='between(t,14,21)'{font_arg}:fontsize=80:fontcolor=white:borderw=5:bordercolor=black@0.85:x=(w-text_w)/2:y=130,"
-        f"drawtext=text='1000 kg':enable='between(t,21,28)'{font_arg}:fontsize=80:fontcolor=white:borderw=5:bordercolor=black@0.85:x=(w-text_w)/2:y=130"
-    )
+    synthesize_audio(duration, TEMP_AUDIO, events)
 
     frame_pattern = os.path.join(ASSEMBLE_DIR, "frame_%04d.png")
     subprocess.run(
@@ -405,7 +435,6 @@ def assemble_final_video():
             "-framerate", str(FPS),
             "-i", frame_pattern,
             "-i", TEMP_AUDIO,
-            "-vf", vf_filter,
             "-c:v", "libx264",
             "-pix_fmt", "yuv420p",
             "-preset", "fast",
@@ -435,7 +464,7 @@ if __name__ == "__main__":
     cli_args = raw_args[raw_args.index("--") + 1:] if "--" in raw_args else raw_args[1:]
 
     if "--simulate" in cli_args:
-        simulate_physics()
+        simulate_all_clips()
     elif "--render-chunk" in cli_args:
         idx = int(cli_args[cli_args.index("--render-chunk") + 1])
         tot = int(cli_args[cli_args.index("--render-chunk") + 2])
