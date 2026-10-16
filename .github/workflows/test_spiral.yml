@@ -1,0 +1,44 @@
+name: Test 3D Spiral Video
+
+on:
+  workflow_dispatch: # Execució manual amb un sol clic
+
+jobs:
+  render_spiral_test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Baixar repositori
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Instal·lar FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Instal·lar Blender
+        run: sudo snap install blender --classic
+
+      - name: Instal·lar dependències Python
+        run: pip install requests numpy
+
+      - name: Executar generador 3D
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          export PYTHONPATH=$(python -c "import site; print(site.getsitepackages()[0])"):$PYTHONPATH
+          blender -b -P generate_spiral.py
+
+      - name: Desar vídeo com a Artifact (per si el vols descarregar de GitHub)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-espiral-test
+          path: output_spiral.mp4
+          if-no-files-found: ignore
