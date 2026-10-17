@@ -55,7 +55,7 @@ const HTML_CONTENT = `
       }
     }
 
-    // 2. GENERACIÓ DEL PASSADÍS QUE SEMPRE ACABA EN HORITZONTAL
+    // 2. GENERACIÓ DEL PASSADÍS AMB FINAL HORITZONTAL
     const mouthCol = Math.floor(Math.random() * (COLS - 16)) + 8;
     const turn1Row = chamberBottom - (Math.floor(Math.random() * 4) + 7);
     const sideDir1 = (mouthCol > COLS / 2) ? -1 : 1;
@@ -63,30 +63,28 @@ const HTML_CONTENT = `
     const turn1Col = Math.max(3, Math.min(COLS - 4, mouthCol + sideDir1 * turn1Len));
 
     const turn2Row = turn1Row - (Math.floor(Math.random() * 5) + 6);
-    // Tram final: SEMPRE HORITZONTAL
     const finalDir = (turn1Col > COLS / 2) ? -1 : 1;
     const finalLen = Math.floor(Math.random() * 5) + 6;
     const exitCol = Math.max(2, Math.min(COLS - 3, turn1Col + finalDir * finalLen));
 
     const pathCells = [];
 
-    // Segment 1: Amunt
-    for (let r = chamberBottom; r >= turn1Row; r--) pathCells.push({ r, c: mouthCol, type: 'V1' });
-    // Segment 2: Horitzontal 1
+    // Tram 1: Amunt
+    for (let r = chamberBottom; r >= turn1Row; r--) pathCells.push({ r, c: mouthCol });
+    // Tram 2: Horitzontal 1
     for (let c = mouthCol + sideDir1; sideDir1 > 0 ? c <= turn1Col : c >= turn1Col; c += sideDir1) {
-      pathCells.push({ r: turn1Row, c, type: 'H1' });
+      pathCells.push({ r: turn1Row, c });
     }
-    // Segment 3: Amunt
-    for (let r = turn1Row - 1; r >= turn2Row; r--) pathCells.push({ r, c: turn1Col, type: 'V2' });
-    // Segment 4: FINAL HORITZONTAL cap als vermells
+    // Tram 3: Amunt 2
+    for (let r = turn1Row - 1; r >= turn2Row; r--) pathCells.push({ r, c: turn1Col });
+    // Tram 4: FINAL HORITZONTAL
     for (let c = turn1Col + finalDir; finalDir > 0 ? c <= exitCol : c >= exitCol; c += finalDir) {
-      pathCells.push({ r: turn2Row, c, type: 'H_FINAL' });
+      pathCells.push({ r: turn2Row, c });
     }
 
     const pathSet = new Set(pathCells.map(p => p.r + ',' + p.c));
     const lastCell = pathCells[pathCells.length - 1];
 
-    // Buidar el passadís i crear blindatge gris
     for (const p of pathCells) {
       grid[p.r][p.c] = 0;
       for (let dr = -1; dr <= 1; dr++) {
@@ -94,15 +92,19 @@ const HTML_CONTENT = `
           const nr = p.r + dr;
           const nc = p.c + dc;
           if (nr < chamberTop || nr > chamberBottom || nc < 0 || nc >= COLS) continue;
-          // Deixar la sortida horitzontal oberta
-          if (p === lastCell && dr === 0 && dc === finalDir) continue;
+          if (p === lastCell && dr === 0 && dc === finalDir) continue; // Sortida horitzontal als vermells
           if (!pathSet.has(nr + ',' + nc)) grid[nr][nc] = 1;
         }
       }
     }
 
+    // Coordenades clau de navegació
     const entranceX = mouthCol * CELL_W + CELL_W / 2;
     const entranceY = chamberBottom * CELL_H + CELL_H / 2;
+    const turn1X = turn1Col * CELL_W + CELL_W / 2;
+    const turn1Y = turn1Row * CELL_H + CELL_H / 2;
+    const turn2Y = turn2Row * CELL_H + CELL_H / 2;
+    const exitX = exitCol * CELL_W + CELL_W / 2;
 
     const bricks = [];
     let remainingRed = 0;
@@ -125,7 +127,6 @@ const HTML_CONTENT = `
       }
     }
 
-    // Barra inferior
     const paddle = {
       x: 540,
       y: 1730,
@@ -135,18 +136,19 @@ const HTML_CONTENT = `
       speed: 1350
     };
 
-    // La bola principal que la barra ha de salvar sempre
     let mainBallId = 1;
     let nextBallId = 2;
+    const TARGET_SPEED = 1100;
 
     let balls = [{
       id: mainBallId,
       x: 540,
       y: 1670,
       vx: (Math.random() - 0.5) * 300,
-      vy: -1050,
+      vy: -TARGET_SPEED,
       radius: 8.5,
       trail: [],
+      corridorState: null,
       turn1Attempts: 0
     }];
 
@@ -159,10 +161,9 @@ const HTML_CONTENT = `
     window.advanceFrame = function() {
       simTime += dt;
 
-      // 1. IA DE LA BARRA: Prioritza salvar la bola principal o agafar un boost proper
+      // 1. IA DE LA BARRA
       let targetBall = balls.find(b => b.id === mainBallId) || balls[0];
 
-      // Comprovar si hi ha un boost proper que valgui la pena recollir
       let boostToCatch = null;
       for (const p of powerups) {
         if (p.y > 1300 && p.y < paddle.y) {
@@ -171,14 +172,13 @@ const HTML_CONTENT = `
       }
 
       if (boostToCatch && (!targetBall || targetBall.y < 1350 || targetBall.vy < 0)) {
-        // La bola principal està amunt, podem moure'ns a recollir el boost!
         paddle.targetX = boostToCatch.x;
       } else if (targetBall) {
         if (bouncesDone < requiredBounces) {
           const missOffset = (bouncesDone % 2 === 0 ? 70 : -70);
           paddle.targetX = targetBall.x + missOffset;
         } else {
-          // Tir precís cap a la boca del passadís
+          // Si la bola està caient rebotada del passadís o puja:
           const dx = entranceX - targetBall.x;
           const dy = entranceY - targetBall.y;
           const targetAngle = Math.atan2(dx, -dy);
@@ -191,161 +191,213 @@ const HTML_CONTENT = `
       const pDiff = paddle.targetX - paddle.x;
       paddle.x += Math.sign(pDiff) * Math.min(Math.abs(pDiff), paddle.speed * dt);
 
-      // 2. FÍSICA DE LES BOLES (3 sub-passos)
-      const subSteps = 3;
-      const subDt = dt / subSteps;
-      const TARGET_SPEED = 1100;
+      // 2. FÍSICA DE LES BOLES
+      for (let bi = balls.length - 1; bi >= 0; bi--) {
+        const ball = balls[bi];
 
-      for (let s = 0; s < subSteps; s++) {
-        for (let bi = balls.length - 1; bi >= 0; bi--) {
-          const ball = balls[bi];
-          ball.x += ball.vx * subDt;
-          ball.y += ball.vy * subDt;
+        // GESTIÓ SENSE FALLA DINS DEL PASSADÍS
+        if (ball.corridorState) {
+          if (ball.corridorState === 'V1') {
+            ball.x = entranceX;
+            ball.y += ball.vy * dt;
 
-          // Conservar velocitat constant
-          const spd = Math.hypot(ball.vx, ball.vy);
-          if (spd > 0) {
-            ball.vx = (ball.vx / spd) * TARGET_SPEED;
-            ball.vy = (ball.vy / spd) * TARGET_SPEED;
-          }
+            // Arriba a la primera cantonada
+            if (ball.y <= turn1Y) {
+              ball.turn1Attempts = (ball.turn1Attempts || 0) + 1;
 
-          // Dins el passadís: PROBABILITAT DE REBOT ENRERE A LA PRIMERA CANTONADA
-          const cellC = Math.floor(ball.x / CELL_W);
-          const cellR = Math.floor(ball.y / CELL_H);
-
-          if (cellC === mouthCol && cellR === turn1Row && ball.vy < 0) {
-            ball.turn1Attempts = (ball.turn1Attempts || 0) + 1;
-            // Al primer intent hi ha un 65% de probabilitat de rebotar cap avall i sortir del passadís!
-            if (ball.turn1Attempts === 1 && Math.random() < 0.65) {
-              ball.vy = Math.abs(ball.vy); // Rebot cap avall (torna enrere!)
-              window.audioEvents.push({ time: simTime, freq: 220 });
-            } else {
-              // Gira correctament cap al tram horitzontal
-              ball.vx = sideDir1 * TARGET_SPEED;
-              ball.vy = 0;
-              window.audioEvents.push({ time: simTime, freq: 440 });
-            }
-          }
-
-          // Segona cantonada: d'horitzontal a vertical amunt
-          if (cellR === turn1Row && cellC === turn1Col && Math.abs(ball.vx) > 0) {
-            ball.vy = -TARGET_SPEED;
-            ball.vx = 0;
-            window.audioEvents.push({ time: simTime, freq: 520 });
-          }
-
-          // Tercera cantonada: gir final cap a l'HORITZONTAL de sortida als vermells
-          if (cellR === turn2Row && cellC === turn1Col && ball.vy < 0) {
-            ball.vx = finalDir * TARGET_SPEED;
-            ball.vy = 0;
-            window.audioEvents.push({ time: simTime, freq: 660 });
-          }
-
-          // Parets laterals de la pantalla
-          if (ball.x - ball.radius <= 0) { ball.x = ball.radius; ball.vx = Math.abs(ball.vx); window.audioEvents.push({ time: simTime, freq: 160 }); }
-          else if (ball.x + ball.radius >= 1080) { ball.x = 1080 - ball.radius; ball.vx = -Math.abs(ball.vx); window.audioEvents.push({ time: simTime, freq: 160 }); }
-
-          // Rebot a la barra
-          if (
-            ball.y + ball.radius >= paddle.y - paddle.h / 2 &&
-            ball.y - ball.radius <= paddle.y + paddle.h / 2 &&
-            ball.x >= paddle.x - paddle.w / 2 &&
-            ball.x <= paddle.x + paddle.w / 2 &&
-            ball.vy > 0
-          ) {
-            bouncesDone++;
-            const hitRatio = (ball.x - paddle.x) / (paddle.w / 2);
-            const angle = hitRatio * (Math.PI / 3.1);
-            ball.vx = TARGET_SPEED * Math.sin(angle);
-            ball.vy = -Math.abs(TARGET_SPEED * Math.cos(angle));
-            ball.y = paddle.y - paddle.h / 2 - ball.radius;
-            window.audioEvents.push({ time: simTime, freq: 130 });
-          }
-
-          // Boles que cauen al fons:
-          // Si és una bola secundària, es perd i desapareix!
-          if (ball.y + ball.radius >= 1900) {
-            if (ball.id !== mainBallId && balls.length > 1) {
-              balls.splice(bi, 1);
-              continue;
-            } else {
-              // Si és l'única/principal, rebot de seguretat
-              ball.vy = -Math.abs(ball.vy);
-            }
-          }
-
-          // Col·lisions amb els blocs
-          const gridCol = Math.floor(ball.x / CELL_W);
-          const gridRow = Math.floor(ball.y / CELL_H);
-
-          for (let ro = -1; ro <= 1; ro++) {
-            for (let co = -1; co <= 1; co++) {
-              const r = gridRow + ro;
-              const c = gridCol + co;
-              if (r < 0 || r >= ROWS || c < 0 || c >= COLS) continue;
-
-              const brick = bricks.find(b => b.r === r && b.c === c && b.alive);
-              if (!brick) continue;
-
-              if (
-                ball.x + ball.radius > brick.x &&
-                ball.x - ball.radius < brick.x + brick.w &&
-                ball.y + ball.radius > brick.y &&
-                ball.y - ball.radius < brick.y + brick.h
-              ) {
-                const prevX = ball.x - ball.vx * subDt;
-                if (prevX + ball.radius <= brick.x) {
-                  ball.vx = -Math.abs(ball.vx);
-                  ball.x = brick.x - ball.radius;
-                } else if (prevX - ball.radius >= brick.x + brick.w) {
-                  ball.vx = Math.abs(ball.vx);
-                  ball.x = brick.x + brick.w + ball.radius;
-                } else {
-                  ball.vy = -ball.vy;
-                }
-
-                if (brick.type === 'red') {
-                  brick.alive = false;
-                  remainingRed--;
-                  window.audioEvents.push({ time: simTime, freq: 380 + Math.random() * 90 });
-
-                  for (let p = 0; p < 5; p++) {
-                    const ang = Math.random() * Math.PI * 2;
-                    particles.push({
-                      x: brick.x + brick.w / 2, y: brick.y + brick.h / 2,
-                      vx: Math.cos(ang) * (Math.random() * 200 + 40),
-                      vy: Math.sin(ang) * (Math.random() * 200 + 40),
-                      life: 0.25
-                    });
-                  }
-
-                  // PROBABILITAT DE BOOST BAIXADA AL 3.5% (no en cauen tants)
-                  if (Math.random() < 0.035) {
-                    powerups.push({
-                      x: brick.x + brick.w / 2,
-                      y: brick.y + brick.h / 2,
-                      vy: 340,
-                      radius: 20, // Boost més gran
-                      type: Math.random() < 0.6 ? 'MULTIBALL' : 'BIG_PADDLE'
-                    });
-                  }
-                } else {
-                  window.audioEvents.push({ time: simTime, freq: 180 });
-                }
-                break;
+              // REBOT ENRERE PROBABILÍSTIC AL PRIMER INTENT
+              if (ball.turn1Attempts === 1 && Math.random() < 0.65) {
+                ball.corridorState = 'FALLING_BACK';
+                ball.vy = TARGET_SPEED; // Torna enrere cap avall!
+                window.audioEvents.push({ time: simTime, freq: 220 });
+              } else {
+                // Gira correctament cap al tram horitzontal
+                ball.corridorState = 'H1';
+                ball.y = turn1Y;
+                ball.vx = sideDir1 * TARGET_SPEED;
+                ball.vy = 0;
+                window.audioEvents.push({ time: simTime, freq: 440 });
               }
+            }
+          } else if (ball.corridorState === 'FALLING_BACK') {
+            ball.x = entranceX;
+            ball.y += ball.vy * dt;
+
+            // Surt disparada cap avall per la boca de l'embut
+            if (ball.y >= entranceY + 15) {
+              ball.corridorState = null;
+              ball.vx = (Math.random() - 0.5) * 220;
+              ball.vy = TARGET_SPEED;
+            }
+          } else if (ball.corridorState === 'H1') {
+            ball.y = turn1Y;
+            ball.x += ball.vx * dt;
+
+            // Arriba a la cantonada 2 (puja)
+            if ((sideDir1 > 0 && ball.x >= turn1X) || (sideDir1 < 0 && ball.x <= turn1X)) {
+              ball.corridorState = 'V2';
+              ball.x = turn1X;
+              ball.vy = -TARGET_SPEED;
+              ball.vx = 0;
+              window.audioEvents.push({ time: simTime, freq: 520 });
+            }
+          } else if (ball.corridorState === 'V2') {
+            ball.x = turn1X;
+            ball.y += ball.vy * dt;
+
+            // Arriba a la cantonada 3 (gir final cap a l'horitzontal)
+            if (ball.y <= turn2Y) {
+              ball.corridorState = 'H_FINAL';
+              ball.y = turn2Y;
+              ball.vx = finalDir * TARGET_SPEED;
+              ball.vy = 0;
+              window.audioEvents.push({ time: simTime, freq: 640 });
+            }
+          } else if (ball.corridorState === 'H_FINAL') {
+            ball.y = turn2Y;
+            ball.x += ball.vx * dt;
+
+            // SURT EN HORITZONTAL CAP ALS VERMELLS!
+            if ((finalDir > 0 && ball.x >= exitX) || (finalDir < 0 && ball.x <= exitX)) {
+              ball.corridorState = null;
+              ball.vx = finalDir * TARGET_SPEED;
+              ball.vy = (Math.random() - 0.5) * 350;
+              window.audioEvents.push({ time: simTime, freq: 880 });
+            }
+          }
+
+          // Estela i continuar
+          ball.trail.push({ x: ball.x, y: ball.y });
+          if (ball.trail.length > 7) ball.trail.shift();
+          continue;
+        }
+
+        // FÍSICA NORMAL FORA O DINS LA CAMBRA
+        ball.x += ball.vx * dt;
+        ball.y += ball.vy * dt;
+
+        // PROTECTOR ANTI-BUCLE / ANTI-OSCIL·LACIÓ 1D
+        if (Math.abs(ball.vx) < 160) ball.vx = Math.sign(ball.vx || (Math.random() - 0.5)) * 220;
+        if (Math.abs(ball.vy) < 160) ball.vy = Math.sign(ball.vy || (Math.random() - 0.5)) * 220;
+
+        const spd = Math.hypot(ball.vx, ball.vy);
+        ball.vx = (ball.vx / spd) * TARGET_SPEED;
+        ball.vy = (ball.vy / spd) * TARGET_SPEED;
+
+        // ENTRADA AL PASSADÍS
+        if (
+          ball.vy < 0 &&
+          Math.abs(ball.x - entranceX) < 16 &&
+          Math.abs(ball.y - entranceY) < 20
+        ) {
+          ball.corridorState = 'V1';
+          ball.x = entranceX;
+          ball.y = entranceY;
+          ball.vy = -TARGET_SPEED;
+          ball.vx = 0;
+          window.audioEvents.push({ time: simTime, freq: 350 });
+          continue;
+        }
+
+        // Parets de pantalla
+        if (ball.x - ball.radius <= 0) { ball.x = ball.radius; ball.vx = Math.abs(ball.vx); window.audioEvents.push({ time: simTime, freq: 160 }); }
+        else if (ball.x + ball.radius >= 1080) { ball.x = 1080 - ball.radius; ball.vx = -Math.abs(ball.vx); window.audioEvents.push({ time: simTime, freq: 160 }); }
+
+        // Rebot a la barra
+        if (
+          ball.y + ball.radius >= paddle.y - paddle.h / 2 &&
+          ball.y - ball.radius <= paddle.y + paddle.h / 2 &&
+          ball.x >= paddle.x - paddle.w / 2 &&
+          ball.x <= paddle.x + paddle.w / 2 &&
+          ball.vy > 0
+        ) {
+          bouncesDone++;
+          const hitRatio = (ball.x - paddle.x) / (paddle.w / 2);
+          const angle = hitRatio * (Math.PI / 3.1);
+          ball.vx = TARGET_SPEED * Math.sin(angle);
+          ball.vy = -Math.abs(TARGET_SPEED * Math.cos(angle));
+          ball.y = paddle.y - paddle.h / 2 - ball.radius;
+          window.audioEvents.push({ time: simTime, freq: 130 });
+        }
+
+        // Pèrdua de boles extra que cauen al fons
+        if (ball.y + ball.radius >= 1900) {
+          if (ball.id !== mainBallId && balls.length > 1) {
+            balls.splice(bi, 1);
+            continue;
+          } else {
+            ball.vy = -Math.abs(ball.vy);
+          }
+        }
+
+        // Col·lisió amb maons
+        const gridCol = Math.floor(ball.x / CELL_W);
+        const gridRow = Math.floor(ball.y / CELL_H);
+
+        for (let ro = -1; ro <= 1; ro++) {
+          for (let co = -1; co <= 1; co++) {
+            const r = gridRow + ro;
+            const c = gridCol + co;
+            if (r < 0 || r >= ROWS || c < 0 || c >= COLS) continue;
+
+            const brick = bricks.find(b => b.r === r && b.c === c && b.alive);
+            if (!brick) continue;
+
+            if (
+              ball.x + ball.radius > brick.x &&
+              ball.x - ball.radius < brick.x + brick.w &&
+              ball.y + ball.radius > brick.y &&
+              ball.y - ball.radius < brick.y + brick.h
+            ) {
+              const prevX = ball.x - ball.vx * dt;
+              if (prevX + ball.radius <= brick.x) {
+                ball.vx = -Math.abs(ball.vx);
+                ball.x = brick.x - ball.radius;
+              } else if (prevX - ball.radius >= brick.x + brick.w) {
+                ball.vx = Math.abs(ball.vx);
+                ball.x = brick.x + brick.w + ball.radius;
+              } else {
+                ball.vy = -ball.vy;
+              }
+
+              if (brick.type === 'red') {
+                brick.alive = false;
+                remainingRed--;
+                window.audioEvents.push({ time: simTime, freq: 380 + Math.random() * 90 });
+
+                for (let p = 0; p < 5; p++) {
+                  const ang = Math.random() * Math.PI * 2;
+                  particles.push({
+                    x: brick.x + brick.w / 2, y: brick.y + brick.h / 2,
+                    vx: Math.cos(ang) * (Math.random() * 200 + 40),
+                    vy: Math.sin(ang) * (Math.random() * 200 + 40),
+                    life: 0.25
+                  });
+                }
+
+                // 3.5% de probabilitat de boost
+                if (Math.random() < 0.035) {
+                  powerups.push({
+                    x: brick.x + brick.w / 2,
+                    y: brick.y + brick.h / 2,
+                    vy: 340,
+                    radius: 20,
+                    type: Math.random() < 0.6 ? 'MULTIBALL' : 'BIG_PADDLE'
+                  });
+                }
+              } else {
+                window.audioEvents.push({ time: simTime, freq: 180 });
+              }
+              break;
             }
           }
         }
+
+        ball.trail.push({ x: ball.x, y: ball.y });
+        if (ball.trail.length > 7) ball.trail.shift();
       }
 
-      // Esteles
-      for (const b of balls) {
-        b.trail.push({ x: b.x, y: b.y });
-        if (b.trail.length > 7) b.trail.shift();
-      }
-
-      // 3. BOOSTS: RECOLLIDA PER LA BARRA
+      // 3. BOOSTS
       for (let i = powerups.length - 1; i >= 0; i--) {
         const p = powerups[i];
         p.y += p.vy * dt;
@@ -359,7 +411,6 @@ const HTML_CONTENT = `
           window.audioEvents.push({ time: simTime, freq: 850 });
 
           if (p.type === 'MULTIBALL') {
-            // APAREIXEN 3 BOLES DIRECTAMENT A LA BARRA REBOTANT CAP AMUNT
             for (let k = 0; k < 3; k++) {
               const spreadAngle = (k - 1) * 0.35;
               balls.push({
@@ -369,6 +420,7 @@ const HTML_CONTENT = `
                 vx: TARGET_SPEED * Math.sin(spreadAngle),
                 vy: -Math.abs(TARGET_SPEED * Math.cos(spreadAngle)),
                 radius: 8.5,
+                corridorState: null,
                 trail: []
               });
             }
@@ -414,7 +466,6 @@ const HTML_CONTENT = `
         ctx.fillRect(p.x, p.y, 4, 4);
       }
 
-      // BOOSTS: MÉS GRANS I AMB ICONA INTEGRADA A LA BOLA
       for (const p of powerups) {
         ctx.save();
         ctx.fillStyle = p.type === 'MULTIBALL' ? '#ff0055' : '#00f0ff';
@@ -425,7 +476,6 @@ const HTML_CONTENT = `
         ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
         ctx.fill();
 
-        // Icona interior a la bola
         ctx.fillStyle = '#ffffff';
         ctx.font = '900 18px monospace';
         ctx.textAlign = 'center';
@@ -514,7 +564,7 @@ function generateWavTrack(audioEvents, duration) {
 }
 
 async function start() {
-  console.log('🚀 Renderitzant Destroyer Ball (Final Horitzontal + Boosts Grans)...');
+  console.log('🚀 Renderitzant Destroyer Ball (Anti-Stuck Safe Pipeline)...');
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: WIDTH, height: HEIGHT } });
 
@@ -552,10 +602,10 @@ async function start() {
   const audioEvents = await page.evaluate(() => window.audioEvents);
   await browser.close();
 
-  console.log('🎵 Generant so...');
+  console.log('🎵 Generant àudio...');
   generateWavTrack(audioEvents, frame / FPS);
 
-  console.log('📦 Generant MP4 final...');
+  console.log('📦 Creant MP4 final...');
   await new Promise((res, rej) => {
     const mux = spawn('ffmpeg', [
       '-y', '-i', RAW_VIDEO, '-i', AUDIO_FILE, '-c:v', 'copy', '-c:a', 'aac', '-shortest', FINAL_VIDEO
@@ -572,7 +622,7 @@ async function start() {
 async function sendTelegram(filePath) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID;
-  if (!token || !chatId) return console.log('⚠️ Secrets de Telegram no trobats. Vídeo guardat localment.');
+  if (!token || !chatId) return console.log('⚠️ Secrets de Telegram no trobats. Fitxer guardat localment.');
 
   console.log('📤 Enviant a Telegram...');
   const formData = new FormData();
