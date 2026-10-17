@@ -18,8 +18,8 @@ const HTML_CONTENT = `
 <head>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #08090d; display: flex; justify-content: center; align-items: center; width: 1080px; height: 1920px; overflow: hidden; font-family: 'Segoe UI', Roboto, sans-serif; }
-    canvas { width: 1080px; height: 1920px; }
+    body { background: #000000; display: flex; justify-content: center; align-items: center; width: 1080px; height: 1920px; overflow: hidden; }
+    canvas { width: 1080px; height: 1920px; background: #000000; }
   </style>
 </head>
 <body>
@@ -33,147 +33,173 @@ const HTML_CONTENT = `
     let simTime = 0;
     const dt = 1 / 60;
 
-    // Arena principal
-    const arena = { x: 70, y: 180, width: 940, height: 1650 };
+    // Dimensions de la graella de blocs
+    const COLS = 32;
+    const ROWS = 38;
+    const BRICK_W = 28;
+    const BRICK_H = 22;
+    const GAP = 2;
+    const GRID_X = (1080 - (COLS * (BRICK_W + GAP))) / 2;
+    const GRID_Y = 160;
 
-    // Barra inferior (Paddle)
-    const paddle = {
-      x: 540,
-      y: 1720,
-      w: 190,
-      h: 24,
-      targetX: 540,
-      speed: 1100
-    };
+    // Matriu de blocs: 0 = Buit, 1 = Gris (indestructible), 2 = Vermell (destruïble)
+    const grid = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
 
-    // Paràmetres del forat d'entrada
-    const hole = {
-      x: arena.x + arena.width / 2 - 80,
-      w: 160,
-      y: 1380
-    };
+    // 1. GENERACIÓ PROCEDURAL DEL LABERINT I EMUT
+    const chamberTop = 2;
+    const chamberBottom = 30;
+    const chamberLeft = 2;
+    const chamberRight = COLS - 3;
 
-    // Creació de centenars de quadradets petits
-    const bricks = [];
-    const cols = 28;
-    const rows = 28;
-    const brickW = 28;
-    const brickH = 24;
-    const startX = arena.x + (arena.width - (cols * (brickW + 4))) / 2;
-    const startY = arena.y + 120;
-    const colors = ['#FF0055', '#FF4400', '#FF9900', '#FFDD00', '#00FF66', '#00F0FF', '#0077FF', '#9900FF'];
-
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        bricks.push({
-          x: startX + c * (brickW + 4),
-          y: startY + r * (brickH + 4),
-          w: brickW,
-          h: brickH,
-          color: colors[Math.floor((r / rows) * colors.length)],
-          alive: true
-        });
+    // Omplir cambra interior de vermells
+    for (let r = chamberTop; r <= chamberBottom; r++) {
+      for (let c = chamberLeft; c <= chamberRight; c++) {
+        if (r === chamberTop || r === chamberBottom || c === chamberLeft || c === chamberRight) {
+          grid[r][c] = 1; // Murs grisos exteriors
+        } else {
+          grid[r][c] = 2; // Interior vermell
+        }
       }
     }
 
-    let remainingBricks = bricks.length;
+    // Crear passadís / embut aleatori
+    const mouthCol = Math.floor(Math.random() * (chamberRight - chamberLeft - 8)) + chamberLeft + 4;
+    const tunnelWidth = 2;
+    const funnelBottomRow = 35; // sobresurt cap avall en direcció a la barra
 
-    // Sistema de pilotes (més petites)
+    // Buidar obertura al mur inferior de la cambra
+    for (let w = 0; w < tunnelWidth; w++) {
+      grid[chamberBottom][mouthCol + w] = 0;
+    }
+
+    // Murs del túnel cap avall (embut exterior)
+    for (let r = chamberBottom; r <= funnelBottomRow; r++) {
+      grid[r][mouthCol - 1] = 1;
+      grid[r][mouthCol + tunnelWidth] = 1;
+      for (let w = 0; w < tunnelWidth; w++) grid[r][mouthCol + w] = 0;
+    }
+    // Boca d'entrada eixamplada
+    grid[funnelBottomRow][mouthCol - 2] = 1;
+    grid[funnelBottomRow][mouthCol + tunnelWidth + 1] = 1;
+
+    // Túnel interior cap al cor dels blocs vermells (amb gir aleatori)
+    const bendDirection = Math.random() < 0.5 ? -1 : 1;
+    const bendAmount = Math.floor(Math.random() * 5) + 3;
+    let currC = mouthCol;
+    const targetInsideRow = Math.floor(Math.random() * 8) + 12;
+
+    for (let r = chamberBottom - 1; r >= targetInsideRow; r--) {
+      // Aplicar possible desviació / recolzament
+      if (r < chamberBottom - 4 && r > targetInsideRow + 4 && Math.random() < 0.6) {
+        currC = Math.max(chamberLeft + 2, Math.min(chamberRight - tunnelWidth - 2, currC + bendDirection));
+      }
+      // Paredes grises protectores del túnel interior
+      grid[r][currC - 1] = 1;
+      grid[r][currC + tunnelWidth] = 1;
+      for (let w = 0; w < tunnelWidth; w++) grid[r][currC + w] = 0;
+    }
+
+    // Obertura final a l'interior dels vermells
+    for (let w = 0; w < tunnelWidth; w++) {
+      grid[targetInsideRow - 1][currC + w] = 0;
+    }
+
+    // Convertir a llista de blocs renderitzables
+    const bricks = [];
+    let remainingRed = 0;
+
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (grid[r][c] > 0) {
+          const type = grid[r][c] === 1 ? 'grey' : 'red';
+          if (type === 'red') remainingRed++;
+          bricks.push({
+            r, c,
+            x: GRID_X + c * (BRICK_W + GAP),
+            y: GRID_Y + r * (BRICK_H + GAP),
+            w: BRICK_W,
+            h: BRICK_H,
+            type: type,
+            alive: true
+          });
+        }
+      }
+    }
+
+    // Coordenada de la boca de l'embut (Objectiu de la barra)
+    const funnelEntranceX = GRID_X + (mouthCol + tunnelWidth / 2) * (BRICK_W + GAP);
+    const funnelEntranceY = GRID_Y + funnelBottomRow * (BRICK_H + GAP);
+
+    // Barra inferior
+    const paddle = {
+      x: 540,
+      y: 1740,
+      w: 180,
+      h: 22,
+      targetX: 540,
+      speed: 1200
+    };
+
+    // Pilotes (mida petita)
     let balls = [{
       x: 540,
-      y: 1650,
-      vx: 380,
-      vy: -950,
-      radius: 11,
-      color: '#ffffff',
+      y: 1680,
+      vx: (Math.random() - 0.5) * 400,
+      vy: -980,
+      radius: 9,
       trail: []
     }];
 
-    // Estat de la IA humana (decideix quants intents necessita: 1, 2 o 3)
-    let bounceCount = 0;
-    const targetBounces = Math.floor(Math.random() * 3) + 1; // 1 a 3 rebots
+    // IA Humana: defineix quants rebots farà abans d'encertar (1 a 3)
+    let bouncesDone = 0;
+    const requiredBounces = Math.floor(Math.random() * 3) + 1;
 
-    // Power-ups i efectes
     const powerups = [];
     const particles = [];
-    const floatingTexts = [];
 
-    function spawnPowerup(x, y) {
-      if (Math.random() < 0.12) { // 12% probabilitat
-        const type = Math.random() < 0.65 ? 'MULTIBALL' : 'BIG_PADDLE';
-        powerups.push({ x, y, vy: 340, type });
-      }
-    }
-
-    // Pas de simulació
     window.advanceFrame = function() {
       simTime += dt;
 
-      // 1. IA de la Barra (Humana i imperfecta)
-      // Segueix la pilota més propera a la barra
-      let lowestBall = balls[0];
+      // 1. Control intel·ligent / humà de la barra
+      let trackedBall = balls[0];
       for (const b of balls) {
-        if (b.y > lowestBall.y) lowestBall = b;
+        if (b.y > trackedBall.y) trackedBall = b;
       }
 
-      if (lowestBall) {
-        if (bounceCount < targetBounces) {
-          // Intent fallit: la barra es posiciona lleugerament desviada per fer rebotar cap a la paret
-          const intentionalMissOffset = (bounceCount % 2 === 0 ? 55 : -55);
-          paddle.targetX = lowestBall.x + intentionalMissOffset;
+      if (trackedBall) {
+        if (bouncesDone < requiredBounces) {
+          // Desplaçament intencionat per rebotar fora de l'embut
+          const failOffset = (bouncesDone % 2 === 0 ? 65 : -65);
+          paddle.targetX = trackedBall.x + failOffset;
         } else {
-          // Intent encertat: apunta per embocar al forat
-          const targetHoleX = hole.x + hole.w / 2;
-          const dxToHole = targetHoleX - lowestBall.x;
-          // Càlcul de deflexió: desplaça la pala per donar angle correcte
-          const paddleOffset = Math.max(-75, Math.min(75, -dxToHole * 0.15));
-          paddle.targetX = lowestBall.x + paddleOffset;
+          // Càlcul d'angle precís cap a la boca de l'embut
+          const dxToMouth = funnelEntranceX - trackedBall.x;
+          const correction = Math.max(-75, Math.min(75, -dxToMouth * 0.16));
+          paddle.targetX = trackedBall.x + correction;
         }
       }
 
-      // Moviment suau de la pala
-      paddle.targetX = Math.max(arena.x + paddle.w / 2, Math.min(arena.x + arena.width - paddle.w / 2, paddle.targetX));
-      const moveDiff = paddle.targetX - paddle.x;
-      paddle.x += Math.sign(moveDiff) * Math.min(Math.abs(moveDiff), paddle.speed * dt);
+      // Desplaçament fluid de la barra
+      paddle.targetX = Math.max(paddle.w / 2 + 30, Math.min(1080 - paddle.w / 2 - 30, paddle.targetX));
+      const pDiff = paddle.targetX - paddle.x;
+      paddle.x += Math.sign(pDiff) * Math.min(Math.abs(pDiff), paddle.speed * dt);
 
-      // 2. Sub-stepping físic de les boles (2 passos per evitar túnels de col·lisió)
+      // 2. Física de les boles (2 passos de substepping)
       const subSteps = 2;
       const subDt = dt / subSteps;
 
-      for (let step = 0; step < subSteps; step++) {
+      for (let s = 0; s < subSteps; s++) {
         for (let bi = balls.length - 1; bi >= 0; bi--) {
           const ball = balls[bi];
           ball.x += ball.vx * subDt;
           ball.y += ball.vy * subDt;
 
-          // Xoc amb parets laterals de l'arena
-          if (ball.x - ball.radius <= arena.x) {
-            ball.x = arena.x + ball.radius;
-            ball.vx = Math.abs(ball.vx);
-            window.audioEvents.push({ time: simTime, freq: 150 });
-          } else if (ball.x + ball.radius >= arena.x + arena.width) {
-            ball.x = arena.x + arena.width - ball.radius;
-            ball.vx = -Math.abs(ball.vx);
-            window.audioEvents.push({ time: simTime, freq: 150 });
-          }
+          // Parets laterals i sostre
+          if (ball.x - ball.radius <= 30) { ball.x = 30 + ball.radius; ball.vx = Math.abs(ball.vx); window.audioEvents.push({ time: simTime, freq: 160 }); }
+          else if (ball.x + ball.radius >= 1050) { ball.x = 1050 - ball.radius; ball.vx = -Math.abs(ball.vx); window.audioEvents.push({ time: simTime, freq: 160 }); }
+          if (ball.y - ball.radius <= 30) { ball.y = 30 + ball.radius; ball.vy = Math.abs(ball.vy); window.audioEvents.push({ time: simTime, freq: 160 }); }
 
-          // Xoc amb sostre
-          if (ball.y - ball.radius <= arena.y) {
-            ball.y = arena.y + ball.radius;
-            ball.vy = Math.abs(ball.vy);
-            window.audioEvents.push({ time: simTime, freq: 150 });
-          }
-
-          // Paret de la cambra inferior (amb el FORAT al mig)
-          if (ball.y + ball.radius >= hole.y && ball.y - ball.radius <= hole.y + 12) {
-            const isInsideHole = (ball.x > hole.x && ball.x < hole.x + hole.w);
-            if (!isInsideHole) {
-              ball.vy = -ball.vy;
-              window.audioEvents.push({ time: simTime, freq: 220 });
-            }
-          }
-
-          // Xoc amb la pala inferior
+          // Rebot a la barra
           if (
             ball.y + ball.radius >= paddle.y - paddle.h / 2 &&
             ball.y - ball.radius <= paddle.y + paddle.h / 2 &&
@@ -181,113 +207,124 @@ const HTML_CONTENT = `
             ball.x <= paddle.x + paddle.w / 2 &&
             ball.vy > 0
           ) {
-            bounceCount++;
-            const hitFactor = (ball.x - paddle.x) / (paddle.w / 2); // -1 a 1
-            const currentSpeed = Math.sqrt(ball.vx * ball.vx + ball.vy * ball.vy);
-            const bounceAngle = hitFactor * (Math.PI / 3); // fins a 60 graus
-            ball.vx = currentSpeed * Math.sin(bounceAngle);
-            ball.vy = -Math.abs(currentSpeed * Math.cos(bounceAngle));
+            bouncesDone++;
+            const hitRatio = (ball.x - paddle.x) / (paddle.w / 2);
+            const speed = Math.sqrt(ball.vx * ball.vx + ball.vy * ball.vy);
+            const angle = hitRatio * (Math.PI / 3.2);
+            ball.vx = speed * Math.sin(angle);
+            ball.vy = -Math.abs(speed * Math.cos(angle));
             ball.y = paddle.y - paddle.h / 2 - ball.radius;
-            window.audioEvents.push({ time: simTime, freq: 130 });
+            window.audioEvents.push({ time: simTime, freq: 120 });
           }
 
-          // Si cau al fons absolut, rebot de salvament
-          if (ball.y + ball.radius >= arena.y + arena.height) {
+          // Seguretat inferior
+          if (ball.y + ball.radius >= 1860) {
             ball.vy = -Math.abs(ball.vy);
           }
 
-          // Xoc amb els quadradets diminuts
-          for (let i = 0; i < bricks.length; i++) {
-            const b = bricks[i];
-            if (!b.alive) continue;
+          // Col·lisions ràpides amb la graella de maons
+          const gridCol = Math.floor((ball.x - GRID_X) / (BRICK_W + GAP));
+          const gridRow = Math.floor((ball.y - GRID_Y) / (BRICK_H + GAP));
 
-            if (
-              ball.x + ball.radius > b.x &&
-              ball.x - ball.radius < b.x + b.w &&
-              ball.y + ball.radius > b.y &&
-              ball.y - ball.radius < b.y + b.h
-            ) {
-              b.alive = false;
-              remainingBricks--;
+          for (let ro = -1; ro <= 1; ro++) {
+            for (let co = -1; co <= 1; co++) {
+              const r = gridRow + ro;
+              const c = gridCol + co;
+              if (r < 0 || r >= ROWS || c < 0 || c >= COLS) continue;
 
-              // Decisió de rebot
-              const prevX = ball.x - ball.vx * subDt;
-              if (prevX + ball.radius <= b.x || prevX - ball.radius >= b.x + b.w) {
-                ball.vx = -ball.vx;
-              } else {
-                ball.vy = -ball.vy;
+              const brick = bricks.find(b => b.r === r && b.c === c && b.alive);
+              if (!brick) continue;
+
+              if (
+                ball.x + ball.radius > brick.x &&
+                ball.x - ball.radius < brick.x + brick.w &&
+                ball.y + ball.radius > brick.y &&
+                ball.y - ball.radius < brick.y + brick.h
+              ) {
+                // Rebot
+                const prevX = ball.x - ball.vx * subDt;
+                if (prevX + ball.radius <= brick.x || prevX - ball.radius >= brick.x + brick.w) {
+                  ball.vx = -ball.vx;
+                } else {
+                  ball.vy = -ball.vy;
+                }
+
+                if (brick.type === 'red') {
+                  brick.alive = false;
+                  remainingRed--;
+                  window.audioEvents.push({ time: simTime, freq: 360 + (Math.random() * 80) });
+
+                  // Partícules vermelles
+                  for (let p = 0; p < 6; p++) {
+                    const ang = Math.random() * Math.PI * 2;
+                    particles.push({
+                      x: brick.x + brick.w / 2, y: brick.y + brick.h / 2,
+                      vx: Math.cos(ang) * (Math.random() * 200 + 40),
+                      vy: Math.sin(ang) * (Math.random() * 200 + 40),
+                      life: 0.3
+                    });
+                  }
+
+                  // 10% probabilitat de boost
+                  if (Math.random() < 0.10) {
+                    powerups.push({
+                      x: brick.x + brick.w / 2,
+                      y: brick.y + brick.h / 2,
+                      vy: 360,
+                      type: Math.random() < 0.65 ? 'MULTIBALL' : 'BIG_PADDLE'
+                    });
+                  }
+                } else {
+                  // Bloc gris indestructible
+                  window.audioEvents.push({ time: simTime, freq: 200 });
+                }
+                break;
               }
-
-              // So agut creixent
-              const noteFreq = 300 + (Math.sin(simTime * 6) * 100) + Math.random() * 80;
-              window.audioEvents.push({ time: simTime, freq: noteFreq });
-
-              // Partícules
-              for (let p = 0; p < 8; p++) {
-                const ang = Math.random() * Math.PI * 2;
-                particles.push({
-                  x: b.x + b.w / 2, y: b.y + b.h / 2,
-                  vx: Math.cos(ang) * (Math.random() * 260 + 40),
-                  vy: Math.sin(ang) * (Math.random() * 260 + 40),
-                  color: b.color,
-                  life: 0.35, maxLife: 0.35
-                });
-              }
-
-              spawnPowerup(b.x + b.w / 2, b.y + b.h);
-              break;
             }
           }
         }
       }
 
-      // 3. Esteles de les boles
-      for (const ball of balls) {
-        ball.trail.push({ x: ball.x, y: ball.y });
-        if (ball.trail.length > 8) ball.trail.shift();
+      // Esteles
+      for (const b of balls) {
+        b.trail.push({ x: b.x, y: b.y });
+        if (b.trail.length > 7) b.trail.shift();
       }
 
-      // 4. Gestió de Power-ups (caiguda i recollida)
+      // 3. Gestió de Boosts
       for (let i = powerups.length - 1; i >= 0; i--) {
         const p = powerups[i];
         p.y += p.vy * dt;
 
-        // Recollit per la pala
         if (
           p.y >= paddle.y - paddle.h / 2 &&
-          p.y <= paddle.y + paddle.h / 2 + 20 &&
+          p.y <= paddle.y + paddle.h / 2 + 18 &&
           p.x >= paddle.x - paddle.w / 2 &&
           p.x <= paddle.x + paddle.w / 2
         ) {
-          window.audioEvents.push({ time: simTime, freq: 880 });
-
-          if (p.type === 'MULTIBALL' && balls.length < 16) {
+          window.audioEvents.push({ time: simTime, freq: 750 });
+          if (p.type === 'MULTIBALL' && balls.length < 24) {
             const currentTotal = balls.length;
             for (let b = 0; b < currentTotal; b++) {
               const src = balls[b];
               balls.push({
                 x: src.x, y: src.y,
-                vx: -src.vx + (Math.random() - 0.5) * 150,
-                vy: src.vy + (Math.random() - 0.5) * 150,
+                vx: -src.vx + (Math.random() - 0.5) * 160,
+                vy: src.vy + (Math.random() - 0.5) * 160,
                 radius: src.radius,
-                color: '#ff00aa',
                 trail: []
               });
             }
-            floatingTexts.push({ text: 'x3 PILOTES!', x: p.x, y: p.y - 30, life: 1.0 });
           } else if (p.type === 'BIG_PADDLE') {
-            paddle.w = Math.min(320, paddle.w + 50);
-            floatingTexts.push({ text: '+BARRA!', x: p.x, y: p.y - 30, life: 1.0 });
+            paddle.w = Math.min(320, paddle.w + 45);
           }
           powerups.splice(i, 1);
           continue;
         }
-
-        // Fora de pantalla
-        if (p.y > arena.y + arena.height) powerups.splice(i, 1);
+        if (p.y > 1920) powerups.splice(i, 1);
       }
 
-      // 5. Partícules i textos flotants
+      // Partícules
       for (let i = particles.length - 1; i >= 0; i--) {
         const pt = particles[i];
         pt.x += pt.vx * dt;
@@ -296,14 +333,7 @@ const HTML_CONTENT = `
         if (pt.life <= 0) particles.splice(i, 1);
       }
 
-      for (let i = floatingTexts.length - 1; i >= 0; i--) {
-        const ft = floatingTexts[i];
-        ft.y -= 40 * dt;
-        ft.life -= dt;
-        if (ft.life <= 0) floatingTexts.splice(i, 1);
-      }
-
-      if (remainingBricks <= 0 || simTime >= 40) {
+      if (remainingRed <= 0 || simTime >= 42) {
         window.isFinished = true;
       }
 
@@ -311,109 +341,77 @@ const HTML_CONTENT = `
     };
 
     function render() {
-      // Fons
-      ctx.fillStyle = '#08090d';
+      // Fons 100% negre
+      ctx.fillStyle = '#000000';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      // Arena exterior
-      ctx.strokeStyle = '#181b24';
-      ctx.lineWidth = 6;
-      ctx.strokeRect(arena.x, arena.y, arena.width, arena.height);
-
-      // Mur de la cambra amb el FORAT
-      ctx.fillStyle = '#222838';
-      ctx.fillRect(arena.x, hole.y, hole.x - arena.x, 12); // Paret esquerra
-      ctx.fillRect(hole.x + hole.w, hole.y, (arena.x + arena.width) - (hole.x + hole.w), 12); // Paret dreta
-
-      // Guia lluminosa del forat
-      ctx.strokeStyle = '#00f2fe';
-      ctx.lineWidth = 4;
-      ctx.strokeRect(hole.x, hole.y - 2, hole.w, 16);
-
-      // UI Superior
-      ctx.fillStyle = '#ffffff';
-      ctx.font = '900 50px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('DESTROYER BALL', canvas.width / 2, 110);
-
-      ctx.font = 'bold 36px monospace';
-      ctx.fillStyle = '#00f2fe';
-      ctx.fillText('RESTANTS: ' + remainingBricks, canvas.width / 2, 160);
-
-      // Maons diminuts
+      // Maons
       for (let i = 0; i < bricks.length; i++) {
         const b = bricks[i];
         if (!b.alive) continue;
-        ctx.fillStyle = b.color;
-        ctx.fillRect(b.x, b.y, b.w, b.h);
+
+        if (b.type === 'grey') {
+          ctx.fillStyle = '#6e7480';
+          ctx.fillRect(b.x, b.y, b.w, b.h);
+        } else {
+          ctx.fillStyle = '#ff2b43';
+          ctx.fillRect(b.x, b.y, b.w, b.h);
+        }
       }
 
       // Partícules
+      ctx.fillStyle = '#ff2b43';
       for (const p of particles) {
-        ctx.globalAlpha = p.life / p.maxLife;
-        ctx.fillStyle = p.color;
         ctx.fillRect(p.x, p.y, 4, 4);
       }
-      ctx.globalAlpha = 1.0;
 
-      // Power-ups
+      // Power-ups (sense cap text)
       for (const p of powerups) {
-        ctx.fillStyle = (p.type === 'MULTIBALL' ? '#ff0077' : '#ffd700');
+        ctx.save();
+        if (p.type === 'MULTIBALL') {
+          ctx.fillStyle = '#ff0055';
+          ctx.shadowColor = '#ff0055';
+        } else {
+          ctx.fillStyle = '#00f0ff';
+          ctx.shadowColor = '#00f0ff';
+        }
+        ctx.shadowBlur = 12;
         ctx.beginPath();
-        ctx.roundRect(p.x - 22, p.y - 12, 44, 24, 8);
+        ctx.roundRect(p.x - 14, p.y - 14, 28, 28, 14); // Píndola esfèrica neta
         ctx.fill();
-        ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 14px sans-serif';
-        ctx.fillText(p.type === 'MULTIBALL' ? 'x3' : '+BAR', p.x, p.y + 5);
+        ctx.restore();
       }
 
-      // Textos flotants
-      for (const ft of floatingTexts) {
-        ctx.globalAlpha = ft.life;
-        ctx.fillStyle = '#00ffaa';
-        ctx.font = 'bold 28px sans-serif';
-        ctx.fillText(ft.text, ft.x, ft.y);
-      }
-      ctx.globalAlpha = 1.0;
-
-      // Barra inferior (Paddle) amb resplendor
+      // Barra inferior (Paddle)
       ctx.save();
-      ctx.shadowColor = '#00f2fe';
-      ctx.shadowBlur = 18;
-      ctx.fillStyle = '#00f2fe';
+      ctx.fillStyle = '#ffffff';
+      ctx.shadowColor = '#00f0ff';
+      ctx.shadowBlur = 15;
       ctx.beginPath();
-      ctx.roundRect(paddle.x - paddle.w / 2, paddle.y - paddle.h / 2, paddle.w, paddle.h, 12);
+      ctx.roundRect(paddle.x - paddle.w / 2, paddle.y - paddle.h / 2, paddle.w, paddle.h, 10);
       ctx.fill();
       ctx.restore();
 
-      // Pilotes (petites amb estela)
-      for (const ball of balls) {
-        for (let i = 0; i < ball.trail.length; i++) {
-          const tr = ball.trail[i];
+      // Pilotes amb estela
+      for (const b of balls) {
+        for (let i = 0; i < b.trail.length; i++) {
+          const t = b.trail[i];
           ctx.beginPath();
-          ctx.arc(tr.x, tr.y, ball.radius * 0.7, 0, Math.PI * 2);
-          ctx.fillStyle = ball.color;
-          ctx.globalAlpha = (i / ball.trail.length) * 0.35;
+          ctx.arc(t.x, t.y, b.radius * 0.7, 0, Math.PI * 2);
+          ctx.fillStyle = '#ffffff';
+          ctx.globalAlpha = (i / b.trail.length) * 0.3;
           ctx.fill();
         }
         ctx.globalAlpha = 1.0;
 
         ctx.save();
-        ctx.shadowColor = ball.color;
-        ctx.shadowBlur = 14;
-        ctx.fillStyle = ball.color;
+        ctx.fillStyle = '#ffffff';
+        ctx.shadowColor = '#ffffff';
+        ctx.shadowBlur = 12;
         ctx.beginPath();
-        ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
+        ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
         ctx.fill();
         ctx.restore();
-      }
-
-      if (remainingBricks <= 0) {
-        ctx.fillStyle = 'rgba(0,0,0,0.8)';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.fillStyle = '#00FF66';
-        ctx.font = 'bold 80px sans-serif';
-        ctx.fillText('STAGE CLEARED!', canvas.width / 2, canvas.height / 2);
       }
     }
   </script>
@@ -421,6 +419,7 @@ const HTML_CONTENT = `
 </html>
 `;
 
+// Síntesi d'àudio autònoma en memòria (WAV 16-bit 44.1kHz)
 function generateWavTrack(audioEvents, duration) {
   const sampleRate = 44100;
   const totalSamples = Math.ceil(duration * sampleRate);
@@ -429,7 +428,7 @@ function generateWavTrack(audioEvents, duration) {
   for (const ev of audioEvents) {
     const startSample = Math.floor(ev.time * sampleRate);
     const popLength = Math.floor(0.06 * sampleRate);
-    const freq = ev.freq || 240;
+    const freq = ev.freq || 250;
 
     for (let i = 0; i < popLength; i++) {
       const idx = startSample + i;
@@ -464,7 +463,7 @@ function generateWavTrack(audioEvents, duration) {
 }
 
 async function start() {
-  console.log('🚀 Renderitzant Destroyer Ball (Pixel Grid + Paddle AI)...');
+  console.log('🚀 Renderitzant Destroyer Ball (Laberint Procedural)...');
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: WIDTH, height: HEIGHT } });
 
@@ -502,10 +501,10 @@ async function start() {
   const audioEvents = await page.evaluate(() => window.audioEvents);
   await browser.close();
 
-  console.log('🎵 Sintetitzant àudio de rebots i powerups...');
+  console.log('🎵 Generant so de col·lisions i boosts...');
   generateWavTrack(audioEvents, frame / FPS);
 
-  console.log('📦 Generant vídeo final...');
+  console.log('📦 Muntant MP4 final...');
   await new Promise((res, rej) => {
     const mux = spawn('ffmpeg', [
       '-y', '-i', RAW_VIDEO, '-i', AUDIO_FILE, '-c:v', 'copy', '-c:a', 'aac', '-shortest', FINAL_VIDEO
@@ -522,17 +521,17 @@ async function start() {
 async function sendTelegram(filePath) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID;
-  if (!token || !chatId) return console.log('⚠️ Telegram credentials not found.');
+  if (!token || !chatId) return console.log('⚠️ Secrets de Telegram no trobats. Vídeo guardat localment.');
 
   console.log('📤 Enviant a Telegram...');
   const formData = new FormData();
   formData.append('chat_id', chatId);
-  formData.append('caption', '🕹️ Destroyer Ball amb maons petits, paddle i boosts completat!');
+  formData.append('caption', 'Destroyer Ball Daily Video');
   formData.append('video', new Blob([fs.readFileSync(filePath)], { type: 'video/mp4' }), 'video.mp4');
 
   const res = await fetch(`https://api.telegram.org/bot${token}/sendVideo`, { method: 'POST', body: formData });
   const json = await res.json();
-  if (json.ok) console.log('✅ Enviat a Telegram!');
+  if (json.ok) console.log('✅ Vídeo enviat a Telegram correctament!');
   else console.error('❌ Error Telegram:', json);
 }
 
