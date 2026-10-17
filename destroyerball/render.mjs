@@ -33,78 +33,85 @@ const HTML_CONTENT = `
     let simTime = 0;
     const dt = 1 / 60;
 
-    // Dimensions de la graella de blocs
-    const COLS = 32;
-    const ROWS = 38;
+    // Dimensions: 36 columnes que omplen EXACTAMENT els 1080px (36 * 30px = 1080px)
+    const COLS = 36;
+    const ROWS = 48;
+    const CELL_W = 30;
+    const CELL_H = 26;
     const BRICK_W = 28;
-    const BRICK_H = 22;
+    const BRICK_H = 24;
     const GAP = 2;
-    const GRID_X = (1080 - (COLS * (BRICK_W + GAP))) / 2;
-    const GRID_Y = 160;
 
-    // Matriu de blocs: 0 = Buit, 1 = Gris (indestructible), 2 = Vermell (destruïble)
+    // 0 = Buit, 1 = Gris (Indestructible), 2 = Vermell (Destruïble)
     const grid = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
 
-    // 1. GENERACIÓ PROCEDURAL DEL LABERINT I EMUT
     const chamberTop = 2;
-    const chamberBottom = 30;
-    const chamberLeft = 2;
-    const chamberRight = COLS - 3;
+    const chamberBottom = 42; // Línia que separa la cambra de la zona de la pala
 
-    // Omplir cambra interior de vermells
+    // 1. OMPLIR LA CAMBRA SUPERIOR DE VERMELLS AMB MURS GRISOS
     for (let r = chamberTop; r <= chamberBottom; r++) {
-      for (let c = chamberLeft; c <= chamberRight; c++) {
-        if (r === chamberTop || r === chamberBottom || c === chamberLeft || c === chamberRight) {
-          grid[r][c] = 1; // Murs grisos exteriors
+      for (let c = 0; c < COLS; c++) {
+        if (r === chamberTop || r === chamberBottom || c === 0 || c === COLS - 1) {
+          grid[r][c] = 1; // Mur gris
         } else {
-          grid[r][c] = 2; // Interior vermell
+          grid[r][c] = 2; // Bloc vermell interior
         }
       }
     }
 
-    // Crear passadís / embut aleatori
-    const mouthCol = Math.floor(Math.random() * (chamberRight - chamberLeft - 8)) + chamberLeft + 4;
-    const tunnelWidth = 2;
-    const funnelBottomRow = 35; // sobresurt cap avall en direcció a la barra
+    // 2. GENERAR PASSADÍS D'1 SOL QUADRADET (ORTOGONAL: AMUNT I COSTATS)
+    const mouthCol = Math.floor(Math.random() * (COLS - 14)) + 7;
+    const pathCells = [];
 
-    // Buidar obertura al mur inferior de la cambra
-    for (let w = 0; w < tunnelWidth; w++) {
-      grid[chamberBottom][mouthCol + w] = 0;
+    // Obertura a la paret inferior
+    pathCells.push({ r: chamberBottom, c: mouthCol, dir: 'UP' });
+
+    // Tram 1: Pujar recte amunt (entre 8 i 12 blocs)
+    const turn1Row = chamberBottom - (Math.floor(Math.random() * 5) + 8);
+    for (let r = chamberBottom - 1; r >= turn1Row; r--) {
+      pathCells.push({ r, c: mouthCol, dir: 'UP' });
     }
 
-    // Murs del túnel cap avall (embut exterior)
-    for (let r = chamberBottom; r <= funnelBottomRow; r++) {
-      grid[r][mouthCol - 1] = 1;
-      grid[r][mouthCol + tunnelWidth] = 1;
-      for (let w = 0; w < tunnelWidth; w++) grid[r][mouthCol + w] = 0;
+    // Tram 2: Anar cap als costats (Esquerra o Dreta)
+    const sideDir = (mouthCol > COLS / 2) ? -1 : 1;
+    const turnLength = Math.floor(Math.random() * 5) + 6;
+    const turn2Col = Math.max(3, Math.min(COLS - 4, mouthCol + sideDir * turnLength));
+
+    for (let c = mouthCol + sideDir; sideDir > 0 ? c <= turn2Col : c >= turn2Col; c += sideDir) {
+      pathCells.push({ r: turn1Row, c, dir: sideDir > 0 ? 'RIGHT' : 'LEFT' });
     }
-    // Boca d'entrada eixamplada
-    grid[funnelBottomRow][mouthCol - 2] = 1;
-    grid[funnelBottomRow][mouthCol + tunnelWidth + 1] = 1;
 
-    // Túnel interior cap al cor dels blocs vermells (amb gir aleatori)
-    const bendDirection = Math.random() < 0.5 ? -1 : 1;
-    const bendAmount = Math.floor(Math.random() * 5) + 3;
-    let currC = mouthCol;
-    const targetInsideRow = Math.floor(Math.random() * 8) + 12;
+    // Tram 3: Tornar a pujar recte amunt cap al centre dels vermells
+    const targetEndRow = turn1Row - (Math.floor(Math.random() * 6) + 8);
+    for (let r = turn1Row - 1; r >= targetEndRow; r--) {
+      pathCells.push({ r, c: turn2Col, dir: 'UP' });
+    }
 
-    for (let r = chamberBottom - 1; r >= targetInsideRow; r--) {
-      // Aplicar possible desviació / recolzament
-      if (r < chamberBottom - 4 && r > targetInsideRow + 4 && Math.random() < 0.6) {
-        currC = Math.max(chamberLeft + 2, Math.min(chamberRight - tunnelWidth - 2, currC + bendDirection));
+    const pathSet = new Set(pathCells.map(p => p.r + ',' + p.c));
+    const lastCell = pathCells[pathCells.length - 1];
+
+    // Buidar el passadís i protegir-lo amb parets grises de blindatge
+    for (const p of pathCells) {
+      grid[p.r][p.c] = 0; // Buit per on viatja la bola
+
+      // Posar blocs grisos a tots els voltants del passadís
+      for (let dr = -1; dr <= 1; dr++) {
+        for (let dc = -1; dc <= 1; dc++) {
+          const nr = p.r + dr;
+          const nc = p.c + dc;
+          if (nr < chamberTop || nr > chamberBottom || nc < 0 || nc >= COLS) continue;
+
+          // No tapar la sortida final que dóna a l'interior vermell
+          if (p === lastCell && dr === -1 && dc === 0) continue;
+
+          if (!pathSet.has(nr + ',' + nc)) {
+            grid[nr][nc] = 1; // Bloc gris protector
+          }
+        }
       }
-      // Paredes grises protectores del túnel interior
-      grid[r][currC - 1] = 1;
-      grid[r][currC + tunnelWidth] = 1;
-      for (let w = 0; w < tunnelWidth; w++) grid[r][currC + w] = 0;
     }
 
-    // Obertura final a l'interior dels vermells
-    for (let w = 0; w < tunnelWidth; w++) {
-      grid[targetInsideRow - 1][currC + w] = 0;
-    }
-
-    // Convertir a llista de blocs renderitzables
+    // Crear la llista final d'objectes per al joc
     const bricks = [];
     let remainingRed = 0;
 
@@ -115,77 +122,80 @@ const HTML_CONTENT = `
           if (type === 'red') remainingRed++;
           bricks.push({
             r, c,
-            x: GRID_X + c * (BRICK_W + GAP),
-            y: GRID_Y + r * (BRICK_H + GAP),
+            x: c * CELL_W + 1,
+            y: r * CELL_H + 1,
             w: BRICK_W,
             h: BRICK_H,
-            type: type,
+            type,
             alive: true
           });
         }
       }
     }
 
-    // Coordenada de la boca de l'embut (Objectiu de la barra)
-    const funnelEntranceX = GRID_X + (mouthCol + tunnelWidth / 2) * (BRICK_W + GAP);
-    const funnelEntranceY = GRID_Y + funnelBottomRow * (BRICK_H + GAP);
+    // Coordenada exacta de l'obertura (1 sol quadradet)
+    const entranceX = mouthCol * CELL_W + CELL_W / 2;
+    const entranceY = chamberBottom * CELL_H + CELL_H / 2;
 
     // Barra inferior
     const paddle = {
       x: 540,
-      y: 1740,
+      y: 1730,
       w: 180,
       h: 22,
       targetX: 540,
-      speed: 1200
+      speed: 1300
     };
 
-    // Pilotes (mida petita)
+    // Pilotes (petites per entrar pel túnel estret)
     let balls = [{
       x: 540,
-      y: 1680,
-      vx: (Math.random() - 0.5) * 400,
-      vy: -980,
-      radius: 9,
+      y: 1670,
+      vx: (Math.random() - 0.5) * 350,
+      vy: -960,
+      radius: 8.5,
       trail: []
     }];
 
-    // IA Humana: defineix quants rebots farà abans d'encertar (1 a 3)
+    // IA Humana: 1 a 3 rebots abans d'apuntar a la perfecció
     let bouncesDone = 0;
     const requiredBounces = Math.floor(Math.random() * 3) + 1;
 
     const powerups = [];
     const particles = [];
 
+    // Bucle físic determinista
     window.advanceFrame = function() {
       simTime += dt;
 
-      // 1. Control intel·ligent / humà de la barra
-      let trackedBall = balls[0];
+      // 1. Control de la barra
+      let lowestBall = balls[0];
       for (const b of balls) {
-        if (b.y > trackedBall.y) trackedBall = b;
+        if (b.y > lowestBall.y) lowestBall = b;
       }
 
-      if (trackedBall) {
+      if (lowestBall) {
         if (bouncesDone < requiredBounces) {
-          // Desplaçament intencionat per rebotar fora de l'embut
-          const failOffset = (bouncesDone % 2 === 0 ? 65 : -65);
-          paddle.targetX = trackedBall.x + failOffset;
+          // Rebot fallat intencionadament contra la paret
+          const missOffset = (bouncesDone % 2 === 0 ? 65 : -65);
+          paddle.targetX = lowestBall.x + missOffset;
         } else {
-          // Càlcul d'angle precís cap a la boca de l'embut
-          const dxToMouth = funnelEntranceX - trackedBall.x;
-          const correction = Math.max(-75, Math.min(75, -dxToMouth * 0.16));
-          paddle.targetX = trackedBall.x + correction;
+          // Càlcul precís cap al forat d'1 sol quadradet
+          const dx = entranceX - lowestBall.x;
+          const dy = entranceY - lowestBall.y;
+          const targetAngle = Math.atan2(dx, -dy);
+          const hitFactor = targetAngle / (Math.PI / 3.4);
+          paddle.targetX = lowestBall.x - hitFactor * (paddle.w / 2);
         }
       }
 
-      // Desplaçament fluid de la barra
-      paddle.targetX = Math.max(paddle.w / 2 + 30, Math.min(1080 - paddle.w / 2 - 30, paddle.targetX));
+      // Limitar la barra a la pantalla
+      paddle.targetX = Math.max(paddle.w / 2, Math.min(1080 - paddle.w / 2, paddle.targetX));
       const pDiff = paddle.targetX - paddle.x;
       paddle.x += Math.sign(pDiff) * Math.min(Math.abs(pDiff), paddle.speed * dt);
 
-      // 2. Física de les boles (2 passos de substepping)
-      const subSteps = 2;
+      // 2. Sub-stepping de les pilotes (4 passos per màxima precisió en 1 bloc)
+      const subSteps = 4;
       const subDt = dt / subSteps;
 
       for (let s = 0; s < subSteps; s++) {
@@ -194,12 +204,18 @@ const HTML_CONTENT = `
           ball.x += ball.vx * subDt;
           ball.y += ball.vy * subDt;
 
-          // Parets laterals i sostre
-          if (ball.x - ball.radius <= 30) { ball.x = 30 + ball.radius; ball.vx = Math.abs(ball.vx); window.audioEvents.push({ time: simTime, freq: 160 }); }
-          else if (ball.x + ball.radius >= 1050) { ball.x = 1050 - ball.radius; ball.vx = -Math.abs(ball.vx); window.audioEvents.push({ time: simTime, freq: 160 }); }
-          if (ball.y - ball.radius <= 30) { ball.y = 30 + ball.radius; ball.vy = Math.abs(ball.vy); window.audioEvents.push({ time: simTime, freq: 160 }); }
+          // Parets laterals de la pantalla
+          if (ball.x - ball.radius <= 0) {
+            ball.x = ball.radius;
+            ball.vx = Math.abs(ball.vx);
+            window.audioEvents.push({ time: simTime, freq: 160 });
+          } else if (ball.x + ball.radius >= 1080) {
+            ball.x = 1080 - ball.radius;
+            ball.vx = -Math.abs(ball.vx);
+            window.audioEvents.push({ time: simTime, freq: 160 });
+          }
 
-          // Rebot a la barra
+          // Rebot amb la barra
           if (
             ball.y + ball.radius >= paddle.y - paddle.h / 2 &&
             ball.y - ball.radius <= paddle.y + paddle.h / 2 &&
@@ -214,17 +230,35 @@ const HTML_CONTENT = `
             ball.vx = speed * Math.sin(angle);
             ball.vy = -Math.abs(speed * Math.cos(angle));
             ball.y = paddle.y - paddle.h / 2 - ball.radius;
-            window.audioEvents.push({ time: simTime, freq: 120 });
+            window.audioEvents.push({ time: simTime, freq: 130 });
           }
 
-          // Seguretat inferior
-          if (ball.y + ball.radius >= 1860) {
+          // Fons inferior de seguretat
+          if (ball.y + ball.radius >= 1880) {
             ball.vy = -Math.abs(ball.vy);
           }
 
-          // Col·lisions ràpides amb la graella de maons
-          const gridCol = Math.floor((ball.x - GRID_X) / (BRICK_W + GAP));
-          const gridRow = Math.floor((ball.y - GRID_Y) / (BRICK_H + GAP));
+          // Redirecció suau a les cantonades del passadís estret
+          const currC = Math.floor(ball.x / CELL_W);
+          const currR = Math.floor(ball.y / CELL_H);
+          const currentPathNode = pathCells.find(p => p.r === currR && p.c === currC);
+
+          if (currentPathNode) {
+            if (currentPathNode.dir === 'RIGHT' && ball.vy < 0) {
+              ball.vx = Math.abs(ball.vy);
+              ball.vy = 0;
+            } else if (currentPathNode.dir === 'LEFT' && ball.vy < 0) {
+              ball.vx = -Math.abs(ball.vy);
+              ball.vy = 0;
+            } else if (currentPathNode.dir === 'UP' && Math.abs(ball.vx) > 0) {
+              ball.vy = -Math.abs(ball.vx);
+              ball.vx = 0;
+            }
+          }
+
+          // Col·lisions amb els blocs
+          const gridCol = Math.floor(ball.x / CELL_W);
+          const gridRow = Math.floor(ball.y / CELL_H);
 
           for (let ro = -1; ro <= 1; ro++) {
             for (let co = -1; co <= 1; co++) {
@@ -241,7 +275,6 @@ const HTML_CONTENT = `
                 ball.y + ball.radius > brick.y &&
                 ball.y - ball.radius < brick.y + brick.h
               ) {
-                // Rebot
                 const prevX = ball.x - ball.vx * subDt;
                 if (prevX + ball.radius <= brick.x || prevX - ball.radius >= brick.x + brick.w) {
                   ball.vx = -ball.vx;
@@ -252,20 +285,18 @@ const HTML_CONTENT = `
                 if (brick.type === 'red') {
                   brick.alive = false;
                   remainingRed--;
-                  window.audioEvents.push({ time: simTime, freq: 360 + (Math.random() * 80) });
+                  window.audioEvents.push({ time: simTime, freq: 360 + Math.random() * 80 });
 
-                  // Partícules vermelles
-                  for (let p = 0; p < 6; p++) {
+                  for (let p = 0; p < 5; p++) {
                     const ang = Math.random() * Math.PI * 2;
                     particles.push({
                       x: brick.x + brick.w / 2, y: brick.y + brick.h / 2,
-                      vx: Math.cos(ang) * (Math.random() * 200 + 40),
-                      vy: Math.sin(ang) * (Math.random() * 200 + 40),
-                      life: 0.3
+                      vx: Math.cos(ang) * (Math.random() * 180 + 30),
+                      vy: Math.sin(ang) * (Math.random() * 180 + 30),
+                      life: 0.28
                     });
                   }
 
-                  // 10% probabilitat de boost
                   if (Math.random() < 0.10) {
                     powerups.push({
                       x: brick.x + brick.w / 2,
@@ -275,8 +306,7 @@ const HTML_CONTENT = `
                     });
                   }
                 } else {
-                  // Bloc gris indestructible
-                  window.audioEvents.push({ time: simTime, freq: 200 });
+                  window.audioEvents.push({ time: simTime, freq: 190 });
                 }
                 break;
               }
@@ -291,7 +321,7 @@ const HTML_CONTENT = `
         if (b.trail.length > 7) b.trail.shift();
       }
 
-      // 3. Gestió de Boosts
+      // Boosts
       for (let i = powerups.length - 1; i >= 0; i--) {
         const p = powerups[i];
         p.y += p.vy * dt;
@@ -304,8 +334,8 @@ const HTML_CONTENT = `
         ) {
           window.audioEvents.push({ time: simTime, freq: 750 });
           if (p.type === 'MULTIBALL' && balls.length < 24) {
-            const currentTotal = balls.length;
-            for (let b = 0; b < currentTotal; b++) {
+            const total = balls.length;
+            for (let b = 0; b < total; b++) {
               const src = balls[b];
               balls.push({
                 x: src.x, y: src.y,
@@ -324,7 +354,6 @@ const HTML_CONTENT = `
         if (p.y > 1920) powerups.splice(i, 1);
       }
 
-      // Partícules
       for (let i = particles.length - 1; i >= 0; i--) {
         const pt = particles[i];
         pt.x += pt.vx * dt;
@@ -341,58 +370,52 @@ const HTML_CONTENT = `
     };
 
     function render() {
-      // Fons 100% negre
       ctx.fillStyle = '#000000';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      // Maons
+      // Dibuixar tots els maons (ocupen tota l'amplada)
       for (let i = 0; i < bricks.length; i++) {
         const b = bricks[i];
         if (!b.alive) continue;
 
         if (b.type === 'grey') {
-          ctx.fillStyle = '#6e7480';
+          ctx.fillStyle = '#6b7280';
           ctx.fillRect(b.x, b.y, b.w, b.h);
         } else {
-          ctx.fillStyle = '#ff2b43';
+          ctx.fillStyle = '#ff2440';
           ctx.fillRect(b.x, b.y, b.w, b.h);
         }
       }
 
       // Partícules
-      ctx.fillStyle = '#ff2b43';
+      ctx.fillStyle = '#ff2440';
       for (const p of particles) {
         ctx.fillRect(p.x, p.y, 4, 4);
       }
 
-      // Power-ups (sense cap text)
+      // Boosts (píndoles netes sense text)
       for (const p of powerups) {
         ctx.save();
-        if (p.type === 'MULTIBALL') {
-          ctx.fillStyle = '#ff0055';
-          ctx.shadowColor = '#ff0055';
-        } else {
-          ctx.fillStyle = '#00f0ff';
-          ctx.shadowColor = '#00f0ff';
-        }
+        ctx.fillStyle = p.type === 'MULTIBALL' ? '#ff0055' : '#00f0ff';
+        ctx.shadowColor = ctx.fillStyle;
         ctx.shadowBlur = 12;
         ctx.beginPath();
-        ctx.roundRect(p.x - 14, p.y - 14, 28, 28, 14); // Píndola esfèrica neta
+        ctx.roundRect(p.x - 13, p.y - 13, 26, 26, 13);
         ctx.fill();
         ctx.restore();
       }
 
-      // Barra inferior (Paddle)
+      // Barra inferior
       ctx.save();
       ctx.fillStyle = '#ffffff';
       ctx.shadowColor = '#00f0ff';
-      ctx.shadowBlur = 15;
+      ctx.shadowBlur = 16;
       ctx.beginPath();
       ctx.roundRect(paddle.x - paddle.w / 2, paddle.y - paddle.h / 2, paddle.w, paddle.h, 10);
       ctx.fill();
       ctx.restore();
 
-      // Pilotes amb estela
+      // Pilotes
       for (const b of balls) {
         for (let i = 0; i < b.trail.length; i++) {
           const t = b.trail[i];
@@ -419,7 +442,6 @@ const HTML_CONTENT = `
 </html>
 `;
 
-// Síntesi d'àudio autònoma en memòria (WAV 16-bit 44.1kHz)
 function generateWavTrack(audioEvents, duration) {
   const sampleRate = 44100;
   const totalSamples = Math.ceil(duration * sampleRate);
@@ -463,7 +485,7 @@ function generateWavTrack(audioEvents, duration) {
 }
 
 async function start() {
-  console.log('🚀 Renderitzant Destroyer Ball (Laberint Procedural)...');
+  console.log('🚀 Renderitzant Destroyer Ball (Full Width + 1-Brick Tunnel)...');
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: WIDTH, height: HEIGHT } });
 
@@ -501,10 +523,10 @@ async function start() {
   const audioEvents = await page.evaluate(() => window.audioEvents);
   await browser.close();
 
-  console.log('🎵 Generant so de col·lisions i boosts...');
+  console.log('🎵 Generant so...');
   generateWavTrack(audioEvents, frame / FPS);
 
-  console.log('📦 Muntant MP4 final...');
+  console.log('📦 Creant fitxer MP4 final...');
   await new Promise((res, rej) => {
     const mux = spawn('ffmpeg', [
       '-y', '-i', RAW_VIDEO, '-i', AUDIO_FILE, '-c:v', 'copy', '-c:a', 'aac', '-shortest', FINAL_VIDEO
@@ -521,7 +543,7 @@ async function start() {
 async function sendTelegram(filePath) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID;
-  if (!token || !chatId) return console.log('⚠️ Secrets de Telegram no trobats. Vídeo guardat localment.');
+  if (!token || !chatId) return console.log('⚠️ Telegram credentials not found.');
 
   console.log('📤 Enviant a Telegram...');
   const formData = new FormData();
@@ -531,7 +553,7 @@ async function sendTelegram(filePath) {
 
   const res = await fetch(`https://api.telegram.org/bot${token}/sendVideo`, { method: 'POST', body: formData });
   const json = await res.json();
-  if (json.ok) console.log('✅ Vídeo enviat a Telegram correctament!');
+  if (json.ok) console.log('✅ Enviat a Telegram!');
   else console.error('❌ Error Telegram:', json);
 }
 
