@@ -1,0 +1,28 @@
+name: Destroyer Ball Video Generator
+
+on:
+  workflow_dispatch:
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repositori
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Instal·lar FFmpeg i Playwright
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+          npm install playwright
+          npx playwright install --with-deps chromium
+
+      - name: Generar vídeo i enviar
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: node destroyerball/render.mjs
