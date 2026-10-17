@@ -68,19 +68,10 @@ const HTML_CONTENT = `
     const exitCol = Math.max(2, Math.min(COLS - 3, turn1Col + finalDir * finalLen));
 
     const pathCells = [];
-
-    // Tram 1: Amunt
     for (let r = chamberBottom; r >= turn1Row; r--) pathCells.push({ r, c: mouthCol });
-    // Tram 2: Horitzontal 1
-    for (let c = mouthCol + sideDir1; sideDir1 > 0 ? c <= turn1Col : c >= turn1Col; c += sideDir1) {
-      pathCells.push({ r: turn1Row, c });
-    }
-    // Tram 3: Amunt 2
+    for (let c = mouthCol + sideDir1; sideDir1 > 0 ? c <= turn1Col : c >= turn1Col; c += sideDir1) pathCells.push({ r: turn1Row, c });
     for (let r = turn1Row - 1; r >= turn2Row; r--) pathCells.push({ r, c: turn1Col });
-    // Tram 4: FINAL HORITZONTAL
-    for (let c = turn1Col + finalDir; finalDir > 0 ? c <= exitCol : c >= exitCol; c += finalDir) {
-      pathCells.push({ r: turn2Row, c });
-    }
+    for (let c = turn1Col + finalDir; finalDir > 0 ? c <= exitCol : c >= exitCol; c += finalDir) pathCells.push({ r: turn2Row, c });
 
     const pathSet = new Set(pathCells.map(p => p.r + ',' + p.c));
     const lastCell = pathCells[pathCells.length - 1];
@@ -92,13 +83,12 @@ const HTML_CONTENT = `
           const nr = p.r + dr;
           const nc = p.c + dc;
           if (nr < chamberTop || nr > chamberBottom || nc < 0 || nc >= COLS) continue;
-          if (p === lastCell && dr === 0 && dc === finalDir) continue; // Sortida horitzontal als vermells
+          if (p === lastCell && dr === 0 && dc === finalDir) continue;
           if (!pathSet.has(nr + ',' + nc)) grid[nr][nc] = 1;
         }
       }
     }
 
-    // Coordenades clau de navegació
     const entranceX = mouthCol * CELL_W + CELL_W / 2;
     const entranceY = chamberBottom * CELL_H + CELL_H / 2;
     const turn1X = turn1Col * CELL_W + CELL_W / 2;
@@ -133,7 +123,7 @@ const HTML_CONTENT = `
       w: 180,
       h: 22,
       targetX: 540,
-      speed: 1350
+      speed: 2400 // Velocitat ràpida per posicionar-se amb exactitud matemàtica
     };
 
     let mainBallId = 1;
@@ -143,26 +133,40 @@ const HTML_CONTENT = `
     let balls = [{
       id: mainBallId,
       x: 540,
-      y: 1670,
-      vx: (Math.random() - 0.5) * 300,
-      vy: -TARGET_SPEED,
+      y: 1650,
+      vx: (Math.random() - 0.5) * 350,
+      vy: TARGET_SPEED, // Comença caient cap a la barra per comptar intents de seguida
       radius: 8.5,
       trail: [],
-      corridorState: null,
-      turn1Attempts: 0
+      corridorState: null
     }];
 
-    let bouncesDone = 0;
-    const requiredBounces = Math.floor(Math.random() * 3) + 1;
+    // CONFIGURACIÓ MATEMÀTICA: ALEATORI ENTRE EL 1r I EL 4t INTENT
+    let currentAttempt = 1;
+    const targetAttempt = Math.floor(Math.random() * 4) + 1; // 1, 2, 3 o 4
+    let ballHasEntered = false;
 
     const powerups = [];
     const particles = [];
 
+    // Funció analítica: prediu exactament el punt X d'impacte amb les parets
+    function predictImpactX(ball, targetY) {
+      if (ball.vy <= 0) return ball.x;
+      const minX = ball.radius;
+      const maxX = 1080 - ball.radius;
+      const W = maxX - minX;
+      const timeToHit = (targetY - ball.y) / ball.vy;
+      let rawX = (ball.x - minX) + ball.vx * timeToHit;
+      let mod = rawX % (2 * W);
+      if (mod < 0) mod += 2 * W;
+      return (mod < W) ? minX + mod : minX + (2 * W - mod);
+    }
+
     window.advanceFrame = function() {
       simTime += dt;
 
-      // 1. IA DE LA BARRA
-      let targetBall = balls.find(b => b.id === mainBallId) || balls[0];
+      // 1. CÀLCUL MATEMÀTIC DE LA BARRA
+      let mainBall = balls.find(b => b.id === mainBallId) || balls[0];
 
       let boostToCatch = null;
       for (const p of powerups) {
@@ -171,19 +175,33 @@ const HTML_CONTENT = `
         }
       }
 
-      if (boostToCatch && (!targetBall || targetBall.y < 1350 || targetBall.vy < 0)) {
+      if (boostToCatch && (!mainBall || mainBall.y < 1350 || mainBall.vy < 0)) {
         paddle.targetX = boostToCatch.x;
-      } else if (targetBall) {
-        if (bouncesDone < requiredBounces) {
-          const missOffset = (bouncesDone % 2 === 0 ? 70 : -70);
-          paddle.targetX = targetBall.x + missOffset;
+      } else if (mainBall) {
+        const impactY = paddle.y - paddle.h / 2 - mainBall.radius;
+
+        if (mainBall.vy > 0 && !ballHasEntered && !mainBall.corridorState) {
+          const impactX = predictImpactX(mainBall, impactY);
+
+          if (currentAttempt < targetAttempt) {
+            // Intent previ: desvia expressament cap al lateral per generar el rebot
+            const targetSideX = (impactX > 540) ? 140 : 940;
+            const dx = targetSideX - impactX;
+            const dy = entranceY - impactY;
+            const angle = Math.atan2(dx, -dy);
+            const hitRatio = Math.max(-0.85, Math.min(0.85, angle / (Math.PI / 3.1)));
+            paddle.targetX = impactX - hitRatio * (paddle.w / 2);
+          } else {
+            // INTENT EXACTE (1 a 4): MATES DIRECTES AL FORAT
+            const dx = entranceX - impactX;
+            const dy = entranceY - impactY;
+            const perfectAngle = Math.atan2(dx, -dy);
+            const hitRatio = Math.max(-0.9, Math.min(0.9, perfectAngle / (Math.PI / 3.1)));
+            paddle.targetX = impactX - hitRatio * (paddle.w / 2);
+          }
         } else {
-          // Si la bola està caient rebotada del passadís o puja:
-          const dx = entranceX - targetBall.x;
-          const dy = entranceY - targetBall.y;
-          const targetAngle = Math.atan2(dx, -dy);
-          const hitFactor = targetAngle / (Math.PI / 3.4);
-          paddle.targetX = targetBall.x - hitFactor * (paddle.w / 2);
+          // Segueix suaument la bola si puja o ja és dins
+          paddle.targetX = mainBall.x;
         }
       }
 
@@ -195,45 +213,23 @@ const HTML_CONTENT = `
       for (let bi = balls.length - 1; bi >= 0; bi--) {
         const ball = balls[bi];
 
-        // GESTIÓ SENSE FALLA DINS DEL PASSADÍS
+        // DINS DEL PASSADÍS
         if (ball.corridorState) {
           if (ball.corridorState === 'V1') {
             ball.x = entranceX;
             ball.y += ball.vy * dt;
 
-            // Arriba a la primera cantonada
             if (ball.y <= turn1Y) {
-              ball.turn1Attempts = (ball.turn1Attempts || 0) + 1;
-
-              // REBOT ENRERE PROBABILÍSTIC AL PRIMER INTENT
-              if (ball.turn1Attempts === 1 && Math.random() < 0.65) {
-                ball.corridorState = 'FALLING_BACK';
-                ball.vy = TARGET_SPEED; // Torna enrere cap avall!
-                window.audioEvents.push({ time: simTime, freq: 220 });
-              } else {
-                // Gira correctament cap al tram horitzontal
-                ball.corridorState = 'H1';
-                ball.y = turn1Y;
-                ball.vx = sideDir1 * TARGET_SPEED;
-                ball.vy = 0;
-                window.audioEvents.push({ time: simTime, freq: 440 });
-              }
-            }
-          } else if (ball.corridorState === 'FALLING_BACK') {
-            ball.x = entranceX;
-            ball.y += ball.vy * dt;
-
-            // Surt disparada cap avall per la boca de l'embut
-            if (ball.y >= entranceY + 15) {
-              ball.corridorState = null;
-              ball.vx = (Math.random() - 0.5) * 220;
-              ball.vy = TARGET_SPEED;
+              ball.corridorState = 'H1';
+              ball.y = turn1Y;
+              ball.vx = sideDir1 * TARGET_SPEED;
+              ball.vy = 0;
+              window.audioEvents.push({ time: simTime, freq: 440 });
             }
           } else if (ball.corridorState === 'H1') {
             ball.y = turn1Y;
             ball.x += ball.vx * dt;
 
-            // Arriba a la cantonada 2 (puja)
             if ((sideDir1 > 0 && ball.x >= turn1X) || (sideDir1 < 0 && ball.x <= turn1X)) {
               ball.corridorState = 'V2';
               ball.x = turn1X;
@@ -245,7 +241,6 @@ const HTML_CONTENT = `
             ball.x = turn1X;
             ball.y += ball.vy * dt;
 
-            // Arriba a la cantonada 3 (gir final cap a l'horitzontal)
             if (ball.y <= turn2Y) {
               ball.corridorState = 'H_FINAL';
               ball.y = turn2Y;
@@ -257,7 +252,7 @@ const HTML_CONTENT = `
             ball.y = turn2Y;
             ball.x += ball.vx * dt;
 
-            // SURT EN HORITZONTAL CAP ALS VERMELLS!
+            // DISPARAT HORITZONTALMENT CAP ALS VERMELLS
             if ((finalDir > 0 && ball.x >= exitX) || (finalDir < 0 && ball.x <= exitX)) {
               ball.corridorState = null;
               ball.vx = finalDir * TARGET_SPEED;
@@ -266,17 +261,16 @@ const HTML_CONTENT = `
             }
           }
 
-          // Estela i continuar
           ball.trail.push({ x: ball.x, y: ball.y });
           if (ball.trail.length > 7) ball.trail.shift();
           continue;
         }
 
-        // FÍSICA NORMAL FORA O DINS LA CAMBRA
+        // FÍSICA GENERAL
         ball.x += ball.vx * dt;
         ball.y += ball.vy * dt;
 
-        // PROTECTOR ANTI-BUCLE / ANTI-OSCIL·LACIÓ 1D
+        // Anti-bucle 1D
         if (Math.abs(ball.vx) < 160) ball.vx = Math.sign(ball.vx || (Math.random() - 0.5)) * 220;
         if (Math.abs(ball.vy) < 160) ball.vy = Math.sign(ball.vy || (Math.random() - 0.5)) * 220;
 
@@ -284,17 +278,18 @@ const HTML_CONTENT = `
         ball.vx = (ball.vx / spd) * TARGET_SPEED;
         ball.vy = (ball.vy / spd) * TARGET_SPEED;
 
-        // ENTRADA AL PASSADÍS
+        // ENTRADA AL FORAT
         if (
           ball.vy < 0 &&
-          Math.abs(ball.x - entranceX) < 16 &&
-          Math.abs(ball.y - entranceY) < 20
+          Math.abs(ball.x - entranceX) < 18 &&
+          Math.abs(ball.y - entranceY) < 22
         ) {
           ball.corridorState = 'V1';
           ball.x = entranceX;
           ball.y = entranceY;
           ball.vy = -TARGET_SPEED;
           ball.vx = 0;
+          ballHasEntered = true;
           window.audioEvents.push({ time: simTime, freq: 350 });
           continue;
         }
@@ -311,7 +306,8 @@ const HTML_CONTENT = `
           ball.x <= paddle.x + paddle.w / 2 &&
           ball.vy > 0
         ) {
-          bouncesDone++;
+          if (!ballHasEntered) currentAttempt++;
+
           const hitRatio = (ball.x - paddle.x) / (paddle.w / 2);
           const angle = hitRatio * (Math.PI / 3.1);
           ball.vx = TARGET_SPEED * Math.sin(angle);
@@ -320,7 +316,7 @@ const HTML_CONTENT = `
           window.audioEvents.push({ time: simTime, freq: 130 });
         }
 
-        // Pèrdua de boles extra que cauen al fons
+        // Boles extra que cauen al buit es perden
         if (ball.y + ball.radius >= 1900) {
           if (ball.id !== mainBallId && balls.length > 1) {
             balls.splice(bi, 1);
@@ -330,7 +326,7 @@ const HTML_CONTENT = `
           }
         }
 
-        // Col·lisió amb maons
+        // Col·lisió amb blocs
         const gridCol = Math.floor(ball.x / CELL_W);
         const gridRow = Math.floor(ball.y / CELL_H);
 
@@ -375,7 +371,6 @@ const HTML_CONTENT = `
                   });
                 }
 
-                // 3.5% de probabilitat de boost
                 if (Math.random() < 0.035) {
                   powerups.push({
                     x: brick.x + brick.w / 2,
@@ -564,7 +559,7 @@ function generateWavTrack(audioEvents, duration) {
 }
 
 async function start() {
-  console.log('🚀 Renderitzant Destroyer Ball (Anti-Stuck Safe Pipeline)...');
+  console.log('🚀 Renderitzant Destroyer Ball (Exact Math Shot)...');
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: WIDTH, height: HEIGHT } });
 
@@ -622,7 +617,7 @@ async function start() {
 async function sendTelegram(filePath) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID;
-  if (!token || !chatId) return console.log('⚠️ Secrets de Telegram no trobats. Fitxer guardat localment.');
+  if (!token || !chatId) return console.log('⚠️ Secrets de Telegram no trobats.');
 
   console.log('📤 Enviant a Telegram...');
   const formData = new FormData();
