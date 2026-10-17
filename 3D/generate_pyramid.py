@@ -16,7 +16,7 @@ TEST_MODE = True  # 👉 True (envia a Telegram) | False (no fa res)
 # VARIACIÓ D'IMPACTE:
 # "vertical" -> Caiguda lliure vertical des de dalt
 # "ramp"     -> Rampa corbada lateral per a xoc horitzontal
-IMPACT_MODE = "vertical"
+IMPACT_MODE = "ramp"
 
 OUTPUT_VIDEO = "output_pyramid.mp4"
 FRAMES_DIR = "temp_frames"
