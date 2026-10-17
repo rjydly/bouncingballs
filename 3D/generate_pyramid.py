@@ -13,9 +13,7 @@ import numpy as np
 # ==============================================================================
 TEST_MODE = True  # 👉 True (envia a Telegram) | False (no fa res)
 
-# VARIACIÓ D'IMPACTE:
-# "vertical" -> Caiguda lliure vertical des de dalt
-# "ramp"     -> Rampa corbada lateral per a xoc horitzontal
+# Mode de caiguda vertical amb caiguda lleugerament angulada
 IMPACT_MODE = "vertical"
 
 OUTPUT_VIDEO = "output_pyramid.mp4"
@@ -37,6 +35,7 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 PYRAMID_LAYERS = 14  # 1.015 blocs
 CUBE_SIZE = 0.20
+APEX_Z = PYRAMID_LAYERS * CUBE_SIZE  # 2.80 metres d'alçada
 
 CLIPS_CONFIG = [
     {"label": "1 KG",     "mass": 1.0,    "radius": 0.20, "is_marble": True},
@@ -47,7 +46,7 @@ CLIPS_CONFIG = [
 
 
 # ==============================================================================
-# 🔔 1. SÍNTESI D'ÀUDIO ASMR SINCRONITZAT
+# 🔔 1. SÍNTESI D'ÀUDIO ASMR (METALL PESAT + CANICA CRISTAL·LINA)
 # ==============================================================================
 def synthesize_audio(duration_sec, output_wav, events):
     print(f"🎵 Sintetitzant àudio ASMR per a {len(events)} impactes detectats...")
@@ -58,37 +57,56 @@ def synthesize_audio(duration_sec, output_wav, events):
     for ev in events:
         t_hit = ev["time"]
         sound_type = ev["type"]  # "marble" o "heavy"
-        intensity = min(1.0, max(0.20, ev.get("intensity", 0.6)))
+        intensity = min(1.0, max(0.25, ev.get("intensity", 0.6)))
         start_idx = int(t_hit * SAMPLE_RATE)
 
         if start_idx >= n_samples:
             continue
 
         if sound_type == "marble":
-            dur = 0.12
+            # To cristal·lí d'alta freqüència de canica rebotant pels esglaons
+            dur = 0.14
             n_note = min(int(dur * SAMPLE_RATE), n_samples - start_idx)
             t = np.linspace(0, dur, n_note, False)
-            freq = 2700.0 + np.random.uniform(-350.0, 350.0)
+            freq = 2800.0 + np.random.uniform(-300.0, 300.0)
 
             marble_clink = (
-                0.70 * np.sin(2 * np.pi * freq * t) +
-                0.25 * np.sin(2 * np.pi * (freq * 2.76) * t) +
-                0.05 * (np.random.rand(n_note) * 2 - 1)
-            ) * np.exp(-45.0 * t)
+                0.65 * np.sin(2 * np.pi * freq * t) * np.exp(-40.0 * t) +
+                0.30 * np.sin(2 * np.pi * (freq * 2.15) * t) * np.exp(-55.0 * t) +
+                0.05 * (np.random.rand(n_note) * 2 - 1) * np.exp(-60.0 * t)
+            )
 
-            audio[start_idx : start_idx + n_note] += marble_clink * intensity * 0.75
+            audio[start_idx : start_idx + n_note] += marble_clink * intensity * 0.70
 
         else:
-            dur = 2.2
+            # Impacte METÀL·LIC PESAT (acer massís + sub-greu contundent + runes)
+            dur = 2.4
             n_note = min(int(dur * SAMPLE_RATE), n_samples - start_idx)
             t = np.linspace(0, dur, n_note, False)
-            sub_freq = ev.get("sub_freq", 55.0)
+            sub_freq = ev.get("sub_freq", 50.0)
 
-            boom = np.sin(2 * np.pi * sub_freq * t) * np.exp(-4.0 * t)
-            crunch = (np.random.rand(n_note) * 2 - 1) * np.exp(-6.0 * t)
-            audio[start_idx : start_idx + n_note] += (boom * 0.80 + crunch * 0.60) * intensity
+            # 1. Ressonància metàl·lica (harmònics d'acer)
+            metal_clang = (
+                0.45 * np.sin(2 * np.pi * 420.0 * t) * np.exp(-12.0 * t) +
+                0.35 * np.sin(2 * np.pi * 880.0 * t) * np.exp(-16.0 * t) +
+                0.20 * np.sin(2 * np.pi * 1550.0 * t) * np.exp(-22.0 * t) +
+                0.15 * np.sin(2 * np.pi * 2900.0 * t) * np.exp(-32.0 * t)
+            )
 
-    audio = np.tanh(audio * 1.35)
+            # 2. Cop sub-greu d'inèrcia amb caiguda de freqüència (punch)
+            pitch_curve = sub_freq + (140.0 - sub_freq) * np.exp(-30.0 * t)
+            phase = 2.0 * np.pi * np.cumsum(pitch_curve) / SAMPLE_RATE
+            sub_thud = np.sin(phase) * np.exp(-4.2 * t)
+
+            # 3. Cruixit de blocs i runa
+            debris = (np.random.rand(n_note) * 2 - 1) * np.exp(-6.5 * t) * 0.25
+
+            # Mescla amb atac ràpid i metàl·lic
+            heavy_wave = (metal_clang * 0.70 + sub_thud * 0.85 + debris * 0.35) * intensity
+            audio[start_idx : start_idx + n_note] += heavy_wave
+
+    # Normalització i protecció contra saturació
+    audio = np.tanh(audio * 1.30)
     max_amp = np.max(np.abs(audio))
     if max_amp > 0:
         audio = (audio / max_amp) * 31500
@@ -102,7 +120,7 @@ def synthesize_audio(duration_sec, output_wav, events):
 
 
 # ==============================================================================
-# 🏗️ 2. SIMULACIÓ FÍSICA A BLENDER (SENSE TEXT 3D I AMB FÍSICA EXACTA)
+# 🏗️ 2. SIMULACIÓ FÍSICA A BLENDER (SENSE PRE-DISPARS I AMB ANGULACIÓ)
 # ==============================================================================
 def simulate_all_clips():
     import bpy
@@ -126,7 +144,7 @@ def simulate_all_clips():
         scene.rigidbody_world.substeps_per_frame = 10
         scene.rigidbody_world.solver_iterations = 10
 
-        # Materials bàsics
+        # Materials
         mat_block = bpy.data.materials.new("BlockMat")
         bsdf_b = mat_block.node_tree.nodes.get("Principled BSDF")
         bsdf_b.inputs["Base Color"].default_value = (0.50, 0.32, 0.17, 1.0)
@@ -176,22 +194,11 @@ def simulate_all_clips():
                     cube.rigid_body.use_deactivation = True
                     active_cubes.append(cube)
 
-        # 3. La bola del clip
+        # 3. La bola: caiguda amb desplaçament lateral mínim (evita que quedi clavada al vèrtex)
         ball_r = config["radius"]
-        if IMPACT_MODE == "ramp":
-            ball_start_pos = (-4.0, 0.0, 5.0)
-            bpy.ops.mesh.primitive_cube_add(size=1.0, location=(-2.6, 0.0, 2.8))
-            ramp = bpy.context.active_object
-            ramp.scale = (3.2, 1.6, 0.15)
-            ramp.rotation_euler = (0, math.radians(35), 0)
-            ramp.data.materials.append(mat_floor)
-            bpy.ops.rigidbody.object_add()
-            ramp.rigid_body.type = 'PASSIVE'
-            ramp.rigid_body.collision_shape = 'BOX'
-            ramp.rigid_body.friction = 0.04
-        else:
-            apex_z = PYRAMID_LAYERS * CUBE_SIZE
-            ball_start_pos = (0.0, 0.0, apex_z + 2.5 + ball_r * 1.5)
+        drop_z = APEX_Z + 2.8 + ball_r
+        # Desplaçament mínim de 7 cm cap a X i 3 cm cap a Y per tocar l'aresta del bloc superior
+        ball_start_pos = (0.07, 0.03, drop_z)
 
         bpy.ops.mesh.primitive_uv_sphere_add(radius=ball_r, segments=32, ring_count=16, location=ball_start_pos)
         ball = bpy.context.active_object
@@ -205,7 +212,7 @@ def simulate_all_clips():
         ball.rigid_body.mass = config["mass"]
         ball.rigid_body.friction = 0.35
 
-        # 4. Càmera i Il·luminació (sense text 3D al mig!)
+        # 4. Càmera i Il·luminació (sense text 3D)
         cam_data = bpy.data.cameras.new("Camera")
         cam = bpy.data.objects.new("Camera", cam_data)
         scene.collection.objects.link(cam)
@@ -219,7 +226,7 @@ def simulate_all_clips():
         light.rotation_euler = (math.radians(45), math.radians(25), math.radians(-30))
         scene.collection.objects.link(light)
 
-        # 5. Bashing i detecció d'impactes
+        # 5. Simulació física
         clip_blend = f"clip_{clip_idx}.blend"
         bpy.ops.wm.save_as_mainfile(filepath=clip_blend)
         try:
@@ -242,14 +249,17 @@ def simulate_all_clips():
 
             cur_pos = np.array(ball.matrix_world.translation, dtype=np.float32)
             cur_vel = (cur_pos - prev_ball_pos) * FPS
-            delta_vel = float(np.linalg.norm(cur_vel - prev_ball_vel))
+            
+            # Desviació de la trajectòria balística de caiguda lliure
+            expected_vel = prev_ball_vel + np.array([0.0, 0.0, -9.81 / FPS], dtype=np.float32)
+            accel_dev = float(np.linalg.norm(cur_vel - expected_vel))
 
             ball.location = cur_pos
             ball.rotation_euler = ball.matrix_world.to_euler()
             ball.keyframe_insert(data_path="location", frame=f)
             ball.keyframe_insert(data_path="rotation_euler", frame=f)
 
-            # Comprovar quants blocs nous s'han mogut en aquest fotograma
+            # Comptar blocs moguts
             newly_moved = 0
             for cube in active_cubes:
                 cur_loc = cube.matrix_world.translation.copy()
@@ -257,7 +267,7 @@ def simulate_all_clips():
 
                 if not has_moved[cube.name]:
                     diff = (cur_loc - init_states[cube.name][0]).length
-                    if diff > 0.02:
+                    if diff > 0.03:
                         has_moved[cube.name] = True
                         newly_moved += 1
                         if f > 1:
@@ -272,29 +282,35 @@ def simulate_all_clips():
                     cube.keyframe_insert(data_path="location", frame=f)
                     cube.keyframe_insert(data_path="rotation_euler", frame=f)
 
-            # --- DETECCIÓ D'IMPACTES FÍSICS EXACTES ---
-            if config["is_marble"]:
-                # Canica (1kg): Detecta bots a la piràmide quan canvia bruscament de velocitat
-                if delta_vel > 1.8 and cur_pos[0] > -2.2 and (f - last_marble_frame >= 4):
-                    last_marble_frame = f
-                    intensity = min(1.0, max(0.25, delta_vel / 7.0))
-                    all_events.append({
-                        "time": t_global,
-                        "type": "marble",
-                        "intensity": intensity
-                    })
-            else:
-                # Pesos pesats: Es dispara en el moment precís que toca i mou els primers cubs!
-                if not main_impact_done and (newly_moved >= 3 or (delta_vel > 4.0 and cur_pos[0] > -2.2)):
-                    main_impact_done = True
-                    sub_f = 85.0 if config["label"] == "10 KG" else (50.0 if config["label"] == "100 KG" else 30.0)
-                    all_events.append({
-                        "time": t_global,
-                        "type": "heavy",
-                        "intensity": 1.0,
-                        "sub_freq": sub_f
-                    })
-                    print(f"💥 Impacte pesat detectat al fotograma {f} ({t_global:.2f}s) del clip {config['label']}!")
+            # --- DETECCIÓ D'IMPACTES EXACTA (AMB FILTRE D'ALÇADA INFAL·LIBLE) ---
+            ball_bottom_z = cur_pos[2] - ball_r
+            # Mentre la bola estigui per sobre del vèrtex de la piràmide, NO pot sonar res
+            is_at_pyramid_level = ball_bottom_z <= (APEX_Z + 0.08)
+
+            if is_at_pyramid_level:
+                if config["is_marble"]:
+                    # Canica (1 KG): detecta cada bot quan canvia de velocitat als esglaons
+                    if accel_dev > 1.2 and (f - last_marble_frame >= 3):
+                        last_marble_frame = f
+                        intensity = min(1.0, max(0.25, accel_dev / 5.5))
+                        all_events.append({
+                            "time": t_global,
+                            "type": "marble",
+                            "intensity": intensity
+                        })
+                        print(f"✨ Bot de canica detectat al frame {f} ({t_global:.2f}s, z={cur_pos[2]:.2f})")
+                else:
+                    # Pesos pesats: Primer impacte metall massiu en tocar la piràmide
+                    if not main_impact_done and (accel_dev > 2.5 or newly_moved >= 2):
+                        main_impact_done = True
+                        sub_f = 75.0 if config["label"] == "10 KG" else (48.0 if config["label"] == "100 KG" else 30.0)
+                        all_events.append({
+                            "time": t_global,
+                            "type": "heavy",
+                            "intensity": 1.0,
+                            "sub_freq": sub_f
+                        })
+                        print(f"💥 IMPACTE METÀL·LIC CLAVAT al fotograma {f} ({t_global:.2f}s) del clip {config['label']}!")
 
             prev_ball_pos = cur_pos
             prev_ball_vel = cur_vel
@@ -371,10 +387,10 @@ def send_telegram_video(video_path):
     print("📲 TEST_MODE=True: Enviant vídeo a Telegram...")
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVideo"
     caption = (
-        "💥 <b>BOUNCELAB 3D - PIRÀMIDE (TEXT FFMPEG I SO SINCRONITZAT)</b>\n\n"
+        "💥 <b>BOUNCELAB 3D - PIRÀMIDE (METALL PESAT I CASSETES ASMR)</b>\n\n"
         "✨ <b>Textos:</b> Rètols nets afegits amb FFmpeg (1 KG → 1,000 KG)\n"
-        "🔮 <b>Àudio:</b> Sincronitzat exactament amb el moment d'impacte dels cubs\n"
-        "📐 <b>Resolució:</b> 720x1280 (9:16 vertical)"
+        "🔔 <b>Àudio:</b> Clang metàl·lic realista + ressonància sincronitzada\n"
+        "🔮 <b>Canica:</b> Bota en cascada pels esglaons sense encallar-se"
     )
 
     try:
@@ -412,7 +428,7 @@ def assemble_final_video():
 
     synthesize_audio(duration, TEMP_AUDIO, events)
 
-    # 1. Configurar tipografia per a Ubuntu Runner
+    # Tipografia per defecte als runners Ubuntu de GitHub Actions
     font_candidates = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
@@ -421,7 +437,7 @@ def assemble_final_video():
     font_path = next((f for f in font_candidates if os.path.exists(f)), None)
     font_opt = f":fontfile='{font_path}'" if font_path else ":font='sans'"
 
-    # 2. Generar filtres drawtext per a cada un dels 4 clips (7 segons cadascun)
+    # Filtre de text per a cada clip de 7 segons
     drawtext_filters = []
     labels = [
         (0, 7, "1 KG"),
@@ -431,7 +447,6 @@ def assemble_final_video():
     ]
 
     for t0, t1, label in labels:
-        # Crea una targeta negra translúcida arrodonida amb text blanc brillant centrat a dalt
         filt = (
             f"drawtext=text='{label}'{font_opt}:fontsize=64:fontcolor=white:"
             f"box=1:boxcolor=black@0.65:boxborderw=20:"
